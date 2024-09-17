@@ -1,0 +1,11 @@
+set(BMD_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+set(BMD_SRCS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/dummy.cpp
+)
+
+set(BMD_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
