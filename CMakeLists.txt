@@ -43,7 +43,7 @@ if(BMD_BUILD_WITH_BEASTBOYS)
   FetchContent_MakeAvailable(beastboys)
   message(STATUS "beastboys fetched and made available.")
 
-  list(APPEND INCLUDED_LIBS beastboys)
+  list(APPEND INCLUDED_LIBS beast_boys)
 endif()
 
 target_include_directories(${PROJECT_NAME} PUBLIC
