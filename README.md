@@ -1,5 +1,5 @@
 
-# binancemd
+# binancemd (Binance Market Data)
 
 The **binancemd**  is a C++ library designed to implement **some** endpoints of the socket API for market data provided by Binance.
 
