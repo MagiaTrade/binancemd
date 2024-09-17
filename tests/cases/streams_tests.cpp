@@ -3,53 +3,48 @@
 //
 #include <binancemd>
 #include <catch2/catch.hpp>
-#define SYMBOL_TO_TEST "wdov24"
+#include <mgutils/Utils.h>
 
-TEST_CASE("COMMANDS")
+TEST_CASE("STREAMS", "[streams]")
 {
-//cedro::md::CMDBaseManager manager(CEDRO_USERNAME, CEDRO_PASSWORD, CEDRO_SOFTKEY);
-//
-//std::promise<bool> sendPromise;
-//std::future<bool> sendFuture = sendPromise.get_future();
-//
-//std::shared_ptr<bb::network::rs::Stream> streamPtr;
-//
-//manager.connect([&](bool success, const std::shared_ptr<bb::network::rs::Stream>& stream)
-//{
-//streamPtr = stream;
-//sendPromise.set_value(success);
-//});
-//
-//TestHelper::waitForSuccess(sendFuture, streamPtr, 3);
-//
-//manager.setErrorCallback([&](const cedro::md::Error& error, const std::string& msg)
-//{
-//LOG_WARNING("Error: " + error.toString() + " Msg: " + msg);
-//});
-//
-//SECTION("SQT snapshot")
-//{
-//std::promise<bool> sendSQTPromise;
-//std::future<bool> sendSQTFuture = sendSQTPromise.get_future();
-//bool isSnapshot = true;
-//bool promiseSet = false;
-//
-//manager.subscribeQuote(SYMBOL_TO_TEST,
-//[&](bool success, const char* data, size_t size)
-//{
-//if(promiseSet)
-//return;
-//
-//auto *startMsg = std::strstr(data, "T:");
-//auto *endMsg = std::strchr(data, '!');
-//REQUIRE(startMsg != nullptr);
-//REQUIRE(endMsg != nullptr);
-//REQUIRE(success);
-//REQUIRE(size > 250);
-//LOG_INFO(data);
-//sendSQTPromise.set_value(success);
-//promiseSet = true;
-//
-//}, isSnapshot);
+  bmd::BMDManager manager;
 
+  std::promise<bool> sendPromise;
+  std::future<bool> sendFuture = sendPromise.get_future();
+
+  std::shared_ptr<bb::network::rs::Stream> streamPtr;
+
+  int countMsgs = 0;
+  manager.openFutureAggTradeStream(
+    "btcusdt",
+    20,
+    [&](bool success, const bmd::futuresUSD::models::AggTrade& aggTrade)
+    {
+      countMsgs++;
+      if(success)
+      {
+        logI << "Price: " << aggTrade.price
+             << "Amount: " << aggTrade.amount
+             << "Time: " << aggTrade.time;
+
+        REQUIRE(aggTrade.price != dNaN);
+        REQUIRE( aggTrade.amount != dNaN);
+        REQUIRE(aggTrade.amount != INVALID_INT64);
+      }
+      else
+      {
+        sendPromise.set_value(true);
+      }
+      if(countMsgs >= 10)
+      {
+        sendPromise.set_value(true);
+      }
+    },
+    [&](uint32_t newStreamId, uint32_t oldStreamId){
+
+    }
+  );
+
+  REQUIRE(countMsgs >= 10);
+  sendFuture.wait();
 }
