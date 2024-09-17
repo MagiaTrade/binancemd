@@ -45,6 +45,7 @@ TEST_CASE("STREAMS", "[streams]")
     }
   );
 
-  REQUIRE(countMsgs >= 10);
   sendFuture.wait();
+
+  REQUIRE(countMsgs >= 10);
 }

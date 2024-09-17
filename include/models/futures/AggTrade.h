@@ -32,8 +32,8 @@ namespace bmd::futuresUSD::models
       if(root.getInt64("E").has_value()) time = root.getInt64("E").value();
       if(root.getString("s").has_value()) symbol = root.getString("s").value();
       if(root.getInt64("a").has_value()) tradeID = root.getInt64("a").value();
-      if(root.getDouble("p").has_value()) price = root.getDouble("p").value();
-      if(root.getDouble("q").has_value()) amount = root.getDouble("q").value();
+      if(root.getString("p").has_value()) price = std::stod(root.getString("p").value());
+      if(root.getString("q").has_value()) amount = std::stod(root.getString("q").value());
       if(root.getInt64("f").has_value()) firstTradeID = root.getInt64("f").value();
       if(root.getInt64("l").has_value()) lastTradeID = root.getInt64("l").value();
       if(root.getInt64("T").has_value()) lastTradeExecutedTime = root.getInt64("T").value();
