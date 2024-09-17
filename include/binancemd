@@ -5,4 +5,6 @@
 #ifndef BINANCEMARKETDATA_BINANCEMD
 #define BINANCEMARKETDATA_BINANCEMD
 
+#include "internal/binancemd.h"
+
 #endif //BINANCEMARKETDATA_BINANCEMD

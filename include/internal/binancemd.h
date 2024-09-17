@@ -5,4 +5,8 @@
 #ifndef BINANCEMARKETDATA_BINANCEMD_H
 #define BINANCEMARKETDATA_BINANCEMD_H
 
+#include "common/Logger.h"
+#include "managers/BMDManager.h"
+#include "models/AggTrade.h"
+
 #endif //BINANCEMARKETDATA_BINANCEMD_H
