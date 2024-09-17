@@ -24,8 +24,8 @@ TEST_CASE("STREAMS", "[streams]")
       if(success)
       {
         logI << "Price: " << aggTrade.price
-             << "Amount: " << aggTrade.amount
-             << "Time: " << aggTrade.time;
+             << " Amount: " << aggTrade.amount
+             << " Time: " << aggTrade.time;
 
         REQUIRE(aggTrade.price != dNaN);
         REQUIRE( aggTrade.amount != dNaN);
