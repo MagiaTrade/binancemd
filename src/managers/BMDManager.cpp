@@ -14,7 +14,6 @@
 
 namespace bmd
 {
-
   std::shared_ptr<BMDManager> BMDManager::create()
   {
 // Use a private constructor and create a shared_ptr
@@ -129,7 +128,6 @@ namespace bmd
     return std::move(sharedStream);
   }
 
-
   void BMDManager::reconnectionHandlerFuturesUsdAggTradeStream(
       std::shared_ptr<bb::network::ws::Stream> stream,
       const std::string &symbolCode, uint32_t reconnectInSeconds,
@@ -171,6 +169,8 @@ namespace bmd
     auto tradeStreamTimer = std::make_shared<boost::asio::steady_timer>(_ioc);
     StreamInfo streamInfo{stream, tradeStreamTimer};
 
+    _streams.emplace(newStreamId, std::move(streamInfo));
+
     scheduleTaskAfter(
       reconnectInSeconds,
       tradeStreamTimer,
@@ -189,7 +189,6 @@ namespace bmd
             cb);
       });
 
-    _streams.emplace(newStreamId, std::move(streamInfo));
 
     // Call the callback to inform the client that streams have changed
     if(cb)
@@ -251,26 +250,15 @@ namespace bmd
     std::lock_guard<std::mutex> lock(_streamsMutex);
     auto it = _streams.find(streamID);
 
-    if (it != _streams.end()) {
-      try {
-        // Cancela o timer associado ao stream
-        it->second.timer->cancel();
-
-        // Tenta parar o stream
-        it->second.stream->stop();
-
-        // Log do fechamento do stream
-        logI << "Stream " << streamID << " closed successfully.";
-      } catch (const std::exception& e) {
-        // Captura possíveis erros durante o fechamento do stream
-        logE << "Error closing stream " << streamID << ": " << e.what();
-      }
-
-      // Remove o stream do mapa
+    if (it != _streams.end())
+    {
+      it->second.timer->cancel();
+      it->second.stream->stop();
       _streams.erase(it);
-    } else {
-      // Log caso o stream não seja encontrado
-      logW << "Stream " << streamID << " not found.";
+      logI << "Stream " << streamID << " closed successfully.";
+    } else
+    {
+      logW << "Stream " << streamID << " not found to close.";
     }
   }
 
