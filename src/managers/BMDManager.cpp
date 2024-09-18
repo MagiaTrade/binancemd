@@ -12,20 +12,20 @@
 #endif
 namespace bmd
 {
-  BMDManager::BMDManager()
+  BMDManager::BMDManager():
+  _workGuard(boost::asio::make_work_guard(_ioc))
   {
     _streamer = std::make_shared<bb::Streamer>();
-    _work = std::make_shared<boost::asio::io_context::work>(_ioc);
     _worker = std::thread([&]() {
 #ifdef __APPLE__
-      pthread_setname_np("Binance-Beast-Manager-Worker");
+      pthread_setname_np("BMD-Manager-Worker");
 #endif
       try {
         _ioc.run();
       }
       catch (const boost::system::system_error &e)
       {
-        logE << "Error running Manager ioContext for timers: " << e.what() << "\n";
+        logE << "Error running BMDManager ioContext for timers: " << e.what() << "\n";
       }
     });
 
@@ -35,8 +35,8 @@ namespace bmd
 
   BMDManager::~BMDManager()
   {
+    _workGuard.reset(); // Allow io_context to stop when no work remains
     _ioc.stop();
-//    _work.reset();
     if(_worker.joinable())
       _worker.join();
   }

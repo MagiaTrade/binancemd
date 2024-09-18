@@ -45,7 +45,8 @@ namespace bmd
     std::unordered_map<uint32_t, std::shared_ptr<boost::asio::steady_timer>> _tradeStreamsTimers;
     std::shared_ptr<boost::asio::steady_timer> _timerFuturesUsdAggTradeStream{nullptr};
     boost::asio::io_context _ioc;
-    std::shared_ptr<boost::asio::io_context::work> _work{nullptr};
+//    std::shared_ptr<boost::asio::io_context::work> _work{nullptr};
+    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> _workGuard;
     std::thread _worker;
 
     void scheduleTaskAfter(uint32_t seconds,
