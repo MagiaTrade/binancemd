@@ -52,7 +52,6 @@ namespace bmd
     {
       std::shared_ptr<bb::network::ws::Stream> stream;
       std::shared_ptr<boost::asio::steady_timer> timer;
-      bool pongReceived = false;
     };
 
     std::unordered_map<uint32_t, StreamInfo> _streams;
@@ -60,7 +59,6 @@ namespace bmd
     std::string _futuresUsdSocketBaseUrl = "fstream.binance.com";
     std::string _spotSocketBaseUrl = "stream.binance.com";
     std::shared_ptr<bb::Streamer> _streamer{nullptr};
-    std::shared_ptr<boost::asio::steady_timer> _timerToPingStreams{nullptr};
 
     boost::asio::io_context _ioc;
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> _workGuard;
@@ -70,10 +68,6 @@ namespace bmd
                                    const std::shared_ptr<boost::asio::steady_timer>& timer,
                                    const ScheduleCallback& cb);
 
-    void pingStreams();
-    void pongStream(const std::shared_ptr<bb::network::ws::Stream>& stream);
-    void checkPongs();
-    uint32_t _timeBetweenPingPong = 5; //seconds -> wait 25s to ping + 25s to check pongs and ping again
     std::mutex _streamsMutex;
 
     void reconnectionHandlerFuturesUsdAggTradeStream(std::shared_ptr<bb::network::ws::Stream> stream,

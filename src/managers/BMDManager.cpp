@@ -1,8 +1,6 @@
 //
 // Created by Arthur Motelevicz on 17/09/24.
 //
-
-
 #ifdef __APPLE__
 #include <pthread.h>
 #endif
@@ -43,10 +41,6 @@ namespace bmd
         logE << "Error running BMDManager ioContext for timers: " << e.what();
       }
     });
-
-    //to start the ping streams loop
-    _timerToPingStreams = std::make_shared<boost::asio::steady_timer>(_ioc);
-    pingStreams();
   }
 
   BMDManager::BMDManager():
@@ -127,8 +121,14 @@ namespace bmd
               cb);
         });
 
-    sharedStream->setPongStreamCallback([&](const std::shared_ptr<bb::network::ws::Stream>& stream){
-      pongStream(stream);
+    sharedStream->setPongStreamCallback([&](const std::shared_ptr<bb::network::ws::Stream>& stream)
+    {
+      logW << "Stream pong received!";
+    });
+
+    sharedStream->setPingStreamCallback([&](const std::shared_ptr<bb::network::ws::Stream>& stream)
+    {
+      logW << "Stream ping received!";
     });
 
     return std::move(sharedStream);
@@ -169,7 +169,7 @@ namespace bmd
     }
 
     auto tradeStreamTimer = std::make_shared<boost::asio::steady_timer>(_ioc);
-    StreamInfo streamInfo{stream, tradeStreamTimer, false};
+    StreamInfo streamInfo{stream, tradeStreamTimer};
 
     scheduleTaskAfter(
       reconnectInSeconds,
@@ -209,7 +209,7 @@ namespace bmd
     auto stream = createFuturesUsdAggTradeStream(symbol, reconnectInSeconds, aggTradeCB, cb);
     auto tradeStreamTimer = std::make_shared<boost::asio::steady_timer>(_ioc);
 
-    StreamInfo streamInfo{stream, tradeStreamTimer, false};
+    StreamInfo streamInfo{stream, tradeStreamTimer};
 
     scheduleTaskAfter(
         reconnectInSeconds,
@@ -241,81 +241,6 @@ namespace bmd
     });
   }
 
-  /**
-* PING - PONG STREAMS LOGIC
-* ###############################################
-*/
-  void BMDManager::pingStreams()
-  {
-    std::lock_guard<std::mutex> lock(_streamsMutex);
-
-    for(auto &kv : _streams)
-    {
-      kv.second.pongReceived = false;
-      kv.second.stream->ping();
-    }
-
-    scheduleTaskAfter(
-      _timeBetweenPingPong,
-      _timerToPingStreams,
-      [self = shared_from_this()]
-        (bool success)
-        {
-          if(!success) {
-            logE << "Error scheduling pong check!";
-            return;
-          }
-            self->checkPongs();
-        });
-  }
-
-  void BMDManager::pongStream(const std::shared_ptr<bb::network::ws::Stream>& stream)
-  {
-    std::lock_guard<std::mutex> lock(_streamsMutex);
-
-    logW << "pongStream";
-
-    int streamId = (int)stream->getId();
-    auto it = _streams.find(streamId);
-    if (it != _streams.end())
-      it->second.pongReceived = true;
-    else
-      logE << "Stream pong is not in the map! Something is wrong!";
-  }
-
-  void BMDManager::checkPongs()
-  {
-    /* ---------------------------
-     * Getting streams to stop if pong not received,
-     * stopWithCloseCallbackTriggered will lock the mutex as well.
-     */
-    std::vector<std::shared_ptr<bb::network::ws::Stream>> streamsToStop;
-    {
-      std::lock_guard<std::mutex> lock(_streamsMutex);
-      for (auto& kv : _streams)
-      {
-        if (!kv.second.pongReceived)
-        {
-          streamsToStop.push_back(kv.second.stream);
-        }
-      }
-    }
-    for (auto& stream : streamsToStop)
-      stream->stopWithCloseCallbackTriggered();
-    // -------------------------
-
-    scheduleTaskAfter(
-      _timeBetweenPingPong,
-      _timerToPingStreams,
-      [self = shared_from_this()](bool success)
-      {
-        if(!success) {
-          logE << "Error scheduling ping streams!";
-          return;
-        }
-        self->pingStreams();
-      });
-  }
 
   void BMDManager::closeStream(uint32_t id)
   {

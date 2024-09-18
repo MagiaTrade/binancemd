@@ -91,9 +91,10 @@ TEST_CASE("PING_PONG", "[streams]")
   auto sendPromise = std::make_shared<std::promise<bool>>();
   std::future<bool> sendFuture = sendPromise->get_future();
 
+  logI << "Stream opened!";
   manager->openFutureAggTradeStream(
       "btcusdt",
-      60*60,
+      60*15,
       [countMsgs, sendPromise](bool success, const bmd::futuresUSD::models::AggTrade& aggTrade)
       {
 //          logI << "Symbol: " << aggTrade.symbol
