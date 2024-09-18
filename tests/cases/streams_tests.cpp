@@ -23,9 +23,11 @@ TEST_CASE("STREAMS", "[streams]")
       countMsgs++;
       if(success)
       {
-        logI << "Price: " << aggTrade.price
+        logI << "Symbol: " << aggTrade.symbol
+              << " Price: " << aggTrade.price
              << " Amount: " << aggTrade.amount
              << " Time: " << aggTrade.lastTradeExecutedTime;
+
 
         REQUIRE(aggTrade.price != dNaN);
         REQUIRE( aggTrade.amount != dNaN);
@@ -35,10 +37,9 @@ TEST_CASE("STREAMS", "[streams]")
       {
         sendPromise.set_value(true);
       }
+
       if(countMsgs >= 10)
-      {
         sendPromise.set_value(true);
-      }
     },
     [&](uint32_t newStreamId, uint32_t oldStreamId){
 
