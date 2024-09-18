@@ -41,6 +41,8 @@ namespace bmd
                                       const FuturesUsdAggTradeStreamCallback& aggTradeCB,
                                       const ReconnetUserDataStreamCallback& cb);
 
+    //for tests purposes
+    void closeStream(uint32_t);
 
   private:
     explicit BMDManager();
@@ -55,20 +57,12 @@ namespace bmd
 
     std::unordered_map<uint32_t, StreamInfo> _streams;
 
-//    std::map<uint32_t, std::shared_ptr<bb::network::ws::Stream>> _streams;
-
     std::string _futuresUsdSocketBaseUrl = "fstream.binance.com";
     std::string _spotSocketBaseUrl = "stream.binance.com";
     std::shared_ptr<bb::Streamer> _streamer{nullptr};
-    uint32_t _timeToReconnectOnError = 5; //seconds
-    uint32_t _timeOut = 20000;
-//    std::map<int, bool> _streamsPongTracker;
     std::shared_ptr<boost::asio::steady_timer> _timerToPingStreams{nullptr};
-//    std::unordered_map<uint32_t, std::shared_ptr<boost::asio::steady_timer>> _tradeStreamsTimers;
-    std::shared_ptr<boost::asio::steady_timer> _timerFuturesUsdAggTradeStream{nullptr};
-//    std::map<int, std::shared_ptr<bb::network::ws::Stream>> _futuresSymbolsStreams;
+
     boost::asio::io_context _ioc;
-//    std::shared_ptr<boost::asio::io_context::work> _work{nullptr};
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> _workGuard;
     std::thread _worker;
 
@@ -79,7 +73,8 @@ namespace bmd
     void pingStreams();
     void pongStream(const std::shared_ptr<bb::network::ws::Stream>& stream);
     void checkPongs();
-    uint32_t _timeBetweenPingPong = 25; //seconds -> wait 25s to ping + 25s to check pongs and ping again
+    uint32_t _timeBetweenPingPong = 10; //seconds -> wait 25s to ping + 25s to check pongs and ping again
+    std::mutex _streamsMutex;
 
     void reconnectionHandlerFuturesUsdAggTradeStream(std::shared_ptr<bb::network::ws::Stream> stream,
                                                      const std::string& symbolCode,

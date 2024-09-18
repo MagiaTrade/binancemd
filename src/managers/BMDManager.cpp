@@ -55,6 +55,7 @@ namespace bmd
 
   BMDManager::~BMDManager()
   {
+    logW << "BMDManager destructor";
     _workGuard.reset(); // Allow io_context to stop when no work remains
     _ioc.stop();
     if(_worker.joinable())
@@ -77,28 +78,15 @@ namespace bmd
             "443",
             "/ws/" + cpSymbol + "@aggTrade",
             true,
-            [self = shared_from_this(), aggTradeCB, cb, symbolCode, reconnectInSeconds](bool success, const std::string& data, SharedStream stream)
+            [self = shared_from_this(), aggTradeCB, cb, symbolCode](bool success, const std::string& data, SharedStream stream)
             {
-              if(!success)
+              if (!success)
               {
-                logD << "Futures Stream @aggTrade closed with msg: " << data;
+                logW << "Futures Stream @aggTrade closed with msg: " << data;
                 aggTradeCB(false, futuresUSD::models::AggTrade());
-                //two seconds to attempt to connect again if it not succeeds
-                self->scheduleTaskAfter(self->_timeToReconnectOnError,self->_timerFuturesUsdAggTradeStream,[self, stream, symbolCode, reconnectInSeconds, aggTradeCB, cb](bool success)
-                {
-                  if(!success)
-                  {
-                    logE << "The timer for reschedule Futures AggTrade Stream after error, failed!";
-                    return;
-                  }
 
-                  self->reconnectionHandlerFuturesUsdAggTradeStream(stream,
-                                                              symbolCode,
-                                                              reconnectInSeconds,
-                                                              aggTradeCB,
-                                                              true,
-                                                              cb);
-                });
+                // Stop the stream, which will trigger the close callback
+                stream->stopWithCloseCallbackTriggered();
                 return;
               }
 
@@ -128,14 +116,15 @@ namespace bmd
             aggTradeCB,
             reconnectInSeconds,
             cb]
-            (SharedStream closedStream){
-
-          self->reconnectionHandlerFuturesUsdAggTradeStream(closedStream,
-                                                      symbolCode,
-                                                      reconnectInSeconds,
-                                                      aggTradeCB,
-                                                      true,
-                                                      cb);
+            (SharedStream closedStream)
+        {
+          self->reconnectionHandlerFuturesUsdAggTradeStream(
+              closedStream,
+              symbolCode,
+              reconnectInSeconds,
+              aggTradeCB,
+              true,
+              cb);
         });
 
     sharedStream->setPongStreamCallback([&](const std::shared_ptr<bb::network::ws::Stream>& stream){
@@ -153,6 +142,8 @@ namespace bmd
       bool timerSuccess,
       const ReconnetUserDataStreamCallback &cb)
   {
+    std::lock_guard<std::mutex> lock(_streamsMutex);
+
     if(!timerSuccess)
     {
       logE<< "Futures Trade stream: Time expired error!";
@@ -165,6 +156,7 @@ namespace bmd
     stream->stop();
     stream = createFuturesUsdAggTradeStream(symbolCode,reconnectInSeconds,aggTradeCB,cb);
     auto newStreamId = stream->getId();
+
 
     // Update the StreamInfo Map
     auto it = _streams.find(oldStreamId);
@@ -188,12 +180,13 @@ namespace bmd
         if(!timerSuccess)
           return;
 
-        self->reconnectionHandlerFuturesUsdAggTradeStream(stream,
-                                                    symbolCode,
-                                                    reconnectInSeconds,
-                                                    aggTradeCB,
-                                                    true,
-                                                    cb);
+        self->reconnectionHandlerFuturesUsdAggTradeStream(
+            stream,
+            symbolCode,
+            reconnectInSeconds,
+            aggTradeCB,
+            true,
+            cb);
       });
 
     _streams.emplace(newStreamId, std::move(streamInfo));
@@ -209,6 +202,7 @@ namespace bmd
       const FuturesUsdAggTradeStreamCallback& aggTradeCB,
       const ReconnetUserDataStreamCallback& cb)
   {
+    std::lock_guard<std::mutex> lock(_streamsMutex);
 
     auto cpSymbol = mgutils::string::toLower(symbol);
 
@@ -222,12 +216,13 @@ namespace bmd
         tradeStreamTimer,
         [self = shared_from_this(), reconnectInSeconds, stream, symbol, aggTradeCB, cb](bool success)
           {
-            self->reconnectionHandlerFuturesUsdAggTradeStream(stream,
-                                                        symbol,
-                                                        reconnectInSeconds,
-                                                        aggTradeCB,
-                                                        success,
-                                                        cb);
+            self->reconnectionHandlerFuturesUsdAggTradeStream(
+                stream,
+                symbol,
+                reconnectInSeconds,
+                aggTradeCB,
+                success,
+                cb);
           });
 
     _streams.emplace(stream->getId(), std::move(streamInfo));
@@ -252,6 +247,10 @@ namespace bmd
 */
   void BMDManager::pingStreams()
   {
+    std::lock_guard<std::mutex> lock(_streamsMutex);
+
+    logW << "pingStreams";
+
     for(auto &kv : _streams)
     {
       kv.second.pongReceived = false;
@@ -265,19 +264,24 @@ namespace bmd
 
     scheduleTaskAfter(
       _timeBetweenPingPong,
-      _timerToPingStreams,[self = shared_from_this()]
-      (bool success)
-      {
-        if(!success) {
-          logE << "Error scheduling pong check!";
-          return;
-        }
-        self->checkPongs();
-      });
+      _timerToPingStreams,
+      [self = shared_from_this()]
+        (bool success)
+        {
+          if(!success) {
+            logE << "Error scheduling pong check!";
+            return;
+          }
+          self->checkPongs();
+        });
   }
 
   void BMDManager::pongStream(const std::shared_ptr<bb::network::ws::Stream>& stream)
   {
+    std::lock_guard<std::mutex> lock(_streamsMutex);
+
+    logW << "pongStream";
+
     int streamId = (int)stream->getId();
     auto it = _streams.find(streamId);
     if (it != _streams.end())
@@ -288,6 +292,9 @@ namespace bmd
 
   void BMDManager::checkPongs()
   {
+    std::lock_guard<std::mutex> lock(_streamsMutex);
+
+    logW << "checkPongs";
     for (auto& kv : _streams)
     {
       if (!kv.second.pongReceived)
@@ -305,5 +312,14 @@ namespace bmd
         }
         self->pingStreams();
       });
+  }
+
+  void BMDManager::closeStream(uint32_t id)
+  {
+    for(auto &kv: _streams)
+    {
+      if(kv.first == id)
+        kv.second.stream->stopWithCloseCallbackTriggered();
+    }
   }
 }
