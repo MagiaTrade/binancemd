@@ -2,18 +2,33 @@
 // Created by Arthur Motelevicz on 17/09/24.
 //
 
-#include "managers/BMDManager.h"
-#include "common/Logger.h"
-#include <mgutils/Utils.h>
-#include <mgutils/Json.h>
-#include <mgutils/Exceptions.h>
+
 #ifdef __APPLE__
 #include <pthread.h>
 #endif
+
+#include <mgutils/Utils.h>
+#include <mgutils/Exceptions.h>
+#include <mgutils/Json.h>
+
+#include "common/Logger.h"
+#include "managers/BMDManager.h"
+
 namespace bmd
 {
-  BMDManager::BMDManager():
-  _workGuard(boost::asio::make_work_guard(_ioc))
+
+  std::shared_ptr<BMDManager> BMDManager::create()
+  {
+// Use a private constructor and create a shared_ptr
+    auto instance = std::shared_ptr<BMDManager>(new BMDManager());
+
+    // Now that the instance is managed by a shared_ptr, shared_from_this() will work
+    instance->initialize();
+
+    return instance;
+  }
+
+  void BMDManager::initialize()
   {
     _streamer = std::make_shared<bb::Streamer>();
     _worker = std::thread([&]() {
@@ -25,16 +40,34 @@ namespace bmd
       }
       catch (const boost::system::system_error &e)
       {
-        logE << "Error running BMDManager ioContext for timers: " << e.what() << "\n";
+        logE << "Error running BMDManager ioContext for timers: " << e.what();
       }
     });
 
     //to start the ping streams loop
-    checkPongs();
+    _timerToPingStreams = std::make_shared<boost::asio::steady_timer>(_ioc);
+    pingStreams();
   }
+
+  BMDManager::BMDManager():
+  _workGuard(boost::asio::make_work_guard(_ioc))
+  {}
 
   BMDManager::~BMDManager()
   {
+//    std::promise<bool> pStopped;
+//    std::future<bool> fStopped = pStopped.get_future();
+//    for(auto &kv : _streams)
+//    {
+//      kv.second.stream->setCloseStreamCallback(
+//          [&pStopped](auto stream)
+//          {
+//            pStopped.set_value(true);
+//          });
+//    }
+//    fStopped.wait();
+
+    _streams.clear();
     _workGuard.reset(); // Allow io_context to stop when no work remains
     _ioc.stop();
     if(_worker.joinable())
@@ -59,14 +92,14 @@ namespace bmd
             {
               if(!success)
               {
-                std::cout << "Futures Stream @aggTrade closed with msg: " << data << "\n\n";
+                logD << "Futures Stream @aggTrade closed with msg: " << data;
                 aggTradeCB(false, futuresUSD::models::AggTrade());
                 //two seconds to attempt to connect again if it not succeeds
                 self->scheduleTaskAfter(self->_timeToReconnectOnError,self->_timerFuturesUsdAggTradeStream,[self, stream, symbolCode, reconnectInSeconds, aggTradeCB, cb](bool success)
                 {
                   if(!success)
                   {
-                    std::cerr << "The timer for reschedule Futures AggTrade Stream after error, failed!\n";
+                    logE << "The timer for reschedule Futures AggTrade Stream after error, failed!";
                     return;
                   }
 
@@ -91,6 +124,10 @@ namespace bmd
               {
                 logE << "FuturesUSD Stream @aggTrade parse error: " << error.what();
                 return;
+              }
+              catch (const std::exception& ex)
+              {
+                logE << "Unexpected error while parsing aggTrade data: " << ex.what();
               }
             }
         );
@@ -120,41 +157,42 @@ namespace bmd
   }
 
 
-  void BMDManager::reconnectionHandlerFuturesUsdAggTradeStream(std::shared_ptr<bb::network::ws::Stream> stream,
-                                                            const std::string &symbolCode, uint32_t reconnectInSeconds,
-                                                            const FuturesUsdAggTradeStreamCallback &aggTradeCB,
-                                                            bool timerSuccess,
-                                                            const ReconnetUserDataStreamCallback &cb) {
-
-
-    if(!timerSuccess) {
-      logD<< "Futures Trade stream: Time expired error!\n";
+  void BMDManager::reconnectionHandlerFuturesUsdAggTradeStream(
+      std::shared_ptr<bb::network::ws::Stream> stream,
+      const std::string &symbolCode, uint32_t reconnectInSeconds,
+      const FuturesUsdAggTradeStreamCallback &aggTradeCB,
+      bool timerSuccess,
+      const ReconnetUserDataStreamCallback &cb)
+  {
+    if(!timerSuccess)
+    {
+      logE<< "Futures Trade stream: Time expired error!";
       return;
     }
 
+    logI << "Futures Trade stream: Time expired, reconnecting..";
 
-    logD << "Futures Trade stream: Time expired, reconnecting.. \n";
     auto oldStreamId = stream->getId();
     stream->stop();
     stream = createFuturesUsdAggTradeStream(symbolCode,reconnectInSeconds,aggTradeCB,cb);
     auto newStreamId = stream->getId();
 
-    //we need a new timer because the stream id changed, so we need to update it
-    if(_tradeStreamsTimers.find(oldStreamId) != _tradeStreamsTimers.end())
+    // Update the StreamInfo Map
+    auto it = _streams.find(oldStreamId);
+    if (it != _streams.end())
     {
-      _tradeStreamsTimers.at(oldStreamId)->cancel();
-      _tradeStreamsTimers.erase(oldStreamId);
+      // Cancel the old timer
+      it->second.timer->cancel();
+      // Remove the old entry
+      _streams.erase(it);
     }
 
-    auto traderStreamTimer = std::make_shared<boost::asio::steady_timer>(_ioc);
-    _tradeStreamsTimers.insert_or_assign(newStreamId,traderStreamTimer);
+    auto tradeStreamTimer = std::make_shared<boost::asio::steady_timer>(_ioc);
+    StreamInfo streamInfo{stream, tradeStreamTimer, false};
 
-    if(_streams.find(oldStreamId) != _streams.end())
-      _streams.erase(oldStreamId);
-
-    _streams.emplace(newStreamId, stream);
-
-    scheduleTaskAfterForTimer(reconnectInSeconds, traderStreamTimer,
+    scheduleTaskAfter(
+      reconnectInSeconds,
+      tradeStreamTimer,
       [self = shared_from_this(), stream, symbolCode, aggTradeCB, reconnectInSeconds, cb] (bool timerSuccess)
       {
         //it can be destructed by other reason ex: pong check, so just returns
@@ -169,8 +207,9 @@ namespace bmd
                                                     cb);
       });
 
+    _streams.emplace(newStreamId, std::move(streamInfo));
 
-    //call the callback warning the client that streams changed
+    // Call the callback to inform the client that streams have changed
     if(cb)
       cb(newStreamId, oldStreamId);
   }
@@ -186,53 +225,35 @@ namespace bmd
 
     auto stream = createFuturesUsdAggTradeStream(symbol, reconnectInSeconds, aggTradeCB, cb);
     auto tradeStreamTimer = std::make_shared<boost::asio::steady_timer>(_ioc);
-    _tradeStreamsTimers.insert_or_assign(stream->getId(), tradeStreamTimer);
 
-    scheduleTaskAfterForTimer(reconnectInSeconds, tradeStreamTimer,
-                              [self = shared_from_this(), reconnectInSeconds, stream, symbol, aggTradeCB, cb](bool success) {
-                                self->reconnectionHandlerFuturesUsdAggTradeStream(stream,
-                                                                            symbol,
-                                                                            reconnectInSeconds,
-                                                                            aggTradeCB,
-                                                                            success,
-                                                                            cb);
-                              });
+    StreamInfo streamInfo{stream, tradeStreamTimer, false};
 
-    _streams.emplace(stream->getId(), stream);
+    scheduleTaskAfter(
+        reconnectInSeconds,
+        tradeStreamTimer,
+        [self = shared_from_this(), reconnectInSeconds, stream, symbol, aggTradeCB, cb](bool success)
+          {
+            self->reconnectionHandlerFuturesUsdAggTradeStream(stream,
+                                                        symbol,
+                                                        reconnectInSeconds,
+                                                        aggTradeCB,
+                                                        success,
+                                                        cb);
+          });
+
+    _streams.emplace(stream->getId(), std::move(streamInfo));
     return stream->getId();
   }
 
-  void BMDManager::scheduleTaskAfter(uint32_t seconds,
-                                  std::shared_ptr<boost::asio::steady_timer>& timer,
-                                  const ScheduleCallback& cb)
+  void BMDManager::scheduleTaskAfter(
+      uint32_t seconds,
+      const std::shared_ptr<boost::asio::steady_timer>& timer,
+      const ScheduleCallback& cb)
   {
-    timer = std::make_shared<boost::asio::steady_timer>(_ioc);
     timer->expires_after(std::chrono::seconds(seconds));
     timer->async_wait([cb](const boost::system::error_code& error)
     {
-      if (!error)
-      {
-        cb(true);
-        return;
-      }
-
-      cb(false);
-    });
-  }
-
-  void BMDManager::scheduleTaskAfterForTimer(uint32_t seconds,
-                                          const std::shared_ptr<boost::asio::steady_timer>& timer,
-                                          const ScheduleCallback& cb)
-                                          {
-    timer->expires_after(std::chrono::seconds(seconds));
-    timer->async_wait([cb](const boost::system::error_code& error)
-    {
-      if (!error)
-      {
-        cb(true);
-        return;
-      }
-      cb(false);
+      cb(!error);
     });
   }
 
@@ -240,68 +261,60 @@ namespace bmd
 * PING - PONG STREAMS LOGIC
 * ###############################################
 */
-  void BMDManager::pingStreams() {
-    _streamsPongTracker.clear();
-    for(auto &kv : _streams){
+  void BMDManager::pingStreams()
+  {
+    for(auto &kv : _streams)
+    {
+      kv.second.pongReceived = false;
+      kv.second.stream->ping();
 
-//            logD << "Ping Stream Id: " << kv.first ;
-      kv.second->ping();
-
-      if(_futuresSymbolsStreams.count(kv.first)) {
-        logD << "Skip Pong Check Future symbol stream: " << kv.first <<"!\n";
-        continue;
-      }
-
-      //resets the pong tracker to the check soon
-      _streamsPongTracker.insert_or_assign(kv.first, false);
+//      if(_futuresSymbolsStreams.count(kv.first)) {
+//        logD << "Skip Pong Check Future symbol stream: " << kv.first <<"!\n";
+//        continue;
+//      }
     }
 
-    scheduleTaskAfter(_timeBetweenPingPong, _timerToPingStreams,[&](bool success){
-      if(!success) {
-        std::cerr << "Error scheduling pong check!\n";
-        return;
-      }
-
-      checkPongs();
-    });
+    scheduleTaskAfter(
+      _timeBetweenPingPong,
+      _timerToPingStreams,[self = shared_from_this()]
+      (bool success)
+      {
+        if(!success) {
+          logE << "Error scheduling pong check!";
+          return;
+        }
+        self->checkPongs();
+      });
   }
 
-  void BMDManager::pongStream(const std::shared_ptr<bb::network::ws::Stream>& stream){
-
-//        logD << "PongStream Id: " << stream->getId() ;
-
+  void BMDManager::pongStream(const std::shared_ptr<bb::network::ws::Stream>& stream)
+  {
     int streamId = (int)stream->getId();
-    if(_streamsPongTracker.count(streamId) <= 0){
-      std::cerr << "Stream pong is not in the map! Something wrong!\n";
-      return;
-    }
-
-    _streamsPongTracker.at(streamId) = true;
+    auto it = _streams.find(streamId);
+    if (it != _streams.end())
+      it->second.pongReceived = true;
+    else
+      logE << "Stream pong is not in the map! Something is wrong!";
   }
 
   void BMDManager::checkPongs()
   {
-
-    auto streamsCopy = _streams;
-    for(auto &kv : streamsCopy) {
-
-      //safe check
-      if(_streamsPongTracker.count(kv.first) <= 0)
-        continue;
-
-      //if pong not ok force restart the stream
-      if (!_streamsPongTracker.at(kv.first)) {
-        kv.second->stopWithCloseCallbackTriggered();
-      }
+    for (auto& kv : _streams)
+    {
+      if (!kv.second.pongReceived)
+        kv.second.stream->stopWithCloseCallbackTriggered();
     }
 
-    scheduleTaskAfter(_timeBetweenPingPong, _timerToPingStreams,[&](bool success){
-      if(!success) {
-        std::cerr << "Error scheduling ping streams!\n";
-        return;
-      }
-
-      pingStreams();
-    });
+    scheduleTaskAfter(
+      _timeBetweenPingPong,
+      _timerToPingStreams,
+      [self = shared_from_this()](bool success)
+      {
+        if(!success) {
+          logE << "Error scheduling ping streams!";
+          return;
+        }
+        self->pingStreams();
+      });
   }
 }

@@ -7,12 +7,10 @@
 
 TEST_CASE("STREAMS", "[streams]")
 {
-  auto manager = std::make_shared<bmd::BMDManager>();
+  auto manager = bmd::BMDManager::create();
 
   std::promise<bool> sendPromise;
   std::future<bool> sendFuture = sendPromise.get_future();
-
-  std::shared_ptr<bb::network::rs::Stream> streamPtr;
 
   int countMsgs = 0;
   manager->openFutureAggTradeStream(
