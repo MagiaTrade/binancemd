@@ -139,9 +139,14 @@ namespace bmd
   {
     std::lock_guard<std::mutex> lock(_streamsMutex);
 
-    if(!timerSuccess)
-    {
-      logE<< "Futures Trade stream: Time expired error!";
+    auto itStream = _streams.find(stream->getId());
+    if (itStream == _streams.end()) {
+      logI << "Stream " << stream->getId() << " has been closed, skipping reconnection.";
+      return;
+    }
+
+    if (!timerSuccess) {
+      logC << "Futures Trade stream: Time expired error!";
       return;
     }
 
@@ -235,4 +240,38 @@ namespace bmd
       cb(!error);
     });
   }
+
+  size_t BMDManager::getNumberOfStreams() const
+  {
+    return _streams.size();
+  }
+
+  void BMDManager::closeStream(uint32_t streamID)
+  {
+    std::lock_guard<std::mutex> lock(_streamsMutex);
+    auto it = _streams.find(streamID);
+
+    if (it != _streams.end()) {
+      try {
+        // Cancela o timer associado ao stream
+        it->second.timer->cancel();
+
+        // Tenta parar o stream
+        it->second.stream->stop();
+
+        // Log do fechamento do stream
+        logI << "Stream " << streamID << " closed successfully.";
+      } catch (const std::exception& e) {
+        // Captura possíveis erros durante o fechamento do stream
+        logE << "Error closing stream " << streamID << ": " << e.what();
+      }
+
+      // Remove o stream do mapa
+      _streams.erase(it);
+    } else {
+      // Log caso o stream não seja encontrado
+      logW << "Stream " << streamID << " not found.";
+    }
+  }
+
 }

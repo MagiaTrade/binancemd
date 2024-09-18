@@ -27,6 +27,8 @@ namespace bmd
     static std::shared_ptr<BMDManager> create();
     virtual ~BMDManager();
 
+    size_t getNumberOfStreams() const;
+
     /**
      * @brief Opens a Futures USD AggTrade stream for a given symbol.
      *
@@ -40,6 +42,8 @@ namespace bmd
                                       uint32_t reconnectInSeconds,
                                       const FuturesUsdAggTradeStreamCallback& aggTradeCB,
                                       const ReconnetUserDataStreamCallback& cb);
+
+    void closeStream(uint32_t streamID);
 
   private:
     explicit BMDManager();
