@@ -41,9 +41,6 @@ namespace bmd
                                       const FuturesUsdAggTradeStreamCallback& aggTradeCB,
                                       const ReconnetUserDataStreamCallback& cb);
 
-    //for tests purposes
-    void closeStream(uint32_t);
-
   private:
     explicit BMDManager();
     void initialize();

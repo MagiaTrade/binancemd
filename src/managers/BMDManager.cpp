@@ -240,14 +240,4 @@ namespace bmd
       cb(!error);
     });
   }
-
-
-  void BMDManager::closeStream(uint32_t id)
-  {
-    for(auto &kv: _streams)
-    {
-      if(kv.first == id)
-        kv.second.stream->stopWithCloseCallbackTriggered();
-    }
-  }
 }
