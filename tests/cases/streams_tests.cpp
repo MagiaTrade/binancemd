@@ -21,6 +21,12 @@ TEST_CASE("STREAMS", "[streams]")
     [&countMsgs, &sendPromise](bool success, const bmd::futuresUSD::models::AggTrade& aggTrade)
     {
       countMsgs++;
+      if(countMsgs > 10)
+      {
+        sendPromise.set_value(true);
+        return;
+      }
+
       if(success)
       {
         logI << "Symbol: " << aggTrade.symbol
@@ -37,9 +43,6 @@ TEST_CASE("STREAMS", "[streams]")
       {
         sendPromise.set_value(true);
       }
-
-      if(countMsgs >= 10)
-        sendPromise.set_value(true);
     },
     [&](uint32_t newStreamId, uint32_t oldStreamId){
 
