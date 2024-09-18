@@ -74,7 +74,7 @@ namespace bmd
 
     std::weak_ptr<bb::network::ws::Stream> stream =
         _streamer->openStream(
-            _futuresUsdSocketBaseUrl,
+            _spotSocketBaseUrl,
             "443",
             "/ws/" + cpSymbol + "@aggTrade",
             true,
@@ -249,17 +249,10 @@ namespace bmd
   {
     std::lock_guard<std::mutex> lock(_streamsMutex);
 
-    logW << "pingStreams";
-
     for(auto &kv : _streams)
     {
       kv.second.pongReceived = false;
       kv.second.stream->ping();
-
-//      if(_futuresSymbolsStreams.count(kv.first)) {
-//        logD << "Skip Pong Check Future symbol stream: " << kv.first <<"!\n";
-//        continue;
-//      }
     }
 
     scheduleTaskAfter(
@@ -272,7 +265,7 @@ namespace bmd
             logE << "Error scheduling pong check!";
             return;
           }
-          self->checkPongs();
+            self->checkPongs();
         });
   }
 
@@ -292,14 +285,24 @@ namespace bmd
 
   void BMDManager::checkPongs()
   {
-    std::lock_guard<std::mutex> lock(_streamsMutex);
-
-    logW << "checkPongs";
-    for (auto& kv : _streams)
+    /* ---------------------------
+     * Getting streams to stop if pong not received,
+     * stopWithCloseCallbackTriggered will lock the mutex as well.
+     */
+    std::vector<std::shared_ptr<bb::network::ws::Stream>> streamsToStop;
     {
-      if (!kv.second.pongReceived)
-        kv.second.stream->stopWithCloseCallbackTriggered();
+      std::lock_guard<std::mutex> lock(_streamsMutex);
+      for (auto& kv : _streams)
+      {
+        if (!kv.second.pongReceived)
+        {
+          streamsToStop.push_back(kv.second.stream);
+        }
+      }
     }
+    for (auto& stream : streamsToStop)
+      stream->stopWithCloseCallbackTriggered();
+    // -------------------------
 
     scheduleTaskAfter(
       _timeBetweenPingPong,

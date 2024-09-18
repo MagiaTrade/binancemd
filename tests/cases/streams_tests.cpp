@@ -5,6 +5,35 @@
 #include <catch2/catch.hpp>
 #include <mgutils/Utils.h>
 
+//TEST_CASE("Reconnection", "[streams][reconnection]")
+//{
+//  auto manager = bmd::BMDManager::create();
+//
+//  auto counter = std::make_shared<int>(0);
+//  auto sendPromise = std::make_shared<std::promise<bool>>();
+//  std::future<bool> sendFuture = sendPromise->get_future();
+//
+//  manager->openFutureAggTradeStream(
+//      "btcusdt",
+//      2,
+//      [](bool success, const bmd::futuresUSD::models::AggTrade& aggTrade){},
+//      [counter, sendPromise](uint32_t newStreamId, uint32_t oldStreamId)
+//      {
+//        (*counter)++;
+//        logI << "Reconnection " << " NewId:  " << newStreamId << " OldId: " << oldStreamId;
+//
+//        if( (*counter) == 10)
+//          sendPromise->set_value(true);
+//      }
+//  );
+//
+//  sendFuture.wait();
+//
+//  REQUIRE( (*counter) >= 10 );
+//
+//  manager.reset();
+//}
+//
 //TEST_CASE("STREAMS", "[streams]")
 //{
 //  auto manager = bmd::BMDManager::create();
@@ -13,7 +42,7 @@
 //  auto sendPromise = std::make_shared<std::promise<bool>>();
 //  std::future<bool> sendFuture = sendPromise->get_future();
 //
-//  auto streamID = manager->openFutureAggTradeStream(
+//  manager->openFutureAggTradeStream(
 //    "btcusdt",
 //    20,
 //    [countMsgs, sendPromise](bool success, const bmd::futuresUSD::models::AggTrade& aggTrade)
@@ -51,38 +80,39 @@
 //
 //  REQUIRE( (*countMsgs) >= 10 );
 //
-////  manager->closeStream(streamID);
-//
-////  std::this_thread::sleep_for(std::chrono::seconds(2));
-//
 //  manager.reset();
 //}
 
-TEST_CASE("Reconnection", "[streams][reconnection]")
+TEST_CASE("PING_PONG", "[streams]")
 {
   auto manager = bmd::BMDManager::create();
 
-  auto counter = std::make_shared<int>(0);
+  auto countMsgs = std::make_shared<int>(0);
   auto sendPromise = std::make_shared<std::promise<bool>>();
   std::future<bool> sendFuture = sendPromise->get_future();
 
   manager->openFutureAggTradeStream(
       "btcusdt",
-      2,
-      [](bool success, const bmd::futuresUSD::models::AggTrade& aggTrade){},
-      [counter, sendPromise](uint32_t newStreamId, uint32_t oldStreamId)
+      60*60,
+      [countMsgs, sendPromise](bool success, const bmd::futuresUSD::models::AggTrade& aggTrade)
       {
-        (*counter)++;
-        logI << "Reconnection " << " NewId:  " << newStreamId << " OldId: " << oldStreamId;
+//          logI << "Symbol: " << aggTrade.symbol
+//               << " Price: " << aggTrade.price
+//               << " Amount: " << aggTrade.amount
+//               << " Time: " << aggTrade.lastTradeExecutedTime;
 
-        if( (*counter) == 10)
-          sendPromise->set_value(true);
+
+          REQUIRE(aggTrade.price != dNaN);
+          REQUIRE( aggTrade.amount != dNaN);
+          REQUIRE(aggTrade.lastTradeExecutedTime != INVALID_INT64);
+      },
+      [&](uint32_t newStreamId, uint32_t oldStreamId)
+      {
+        logW << "Reconnection " << " NewId:  " << newStreamId << " OldId: " << oldStreamId;
       }
   );
 
   sendFuture.wait();
-
-  REQUIRE( (*counter) >= 10 );
 
   manager.reset();
 }

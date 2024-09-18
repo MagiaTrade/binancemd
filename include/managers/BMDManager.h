@@ -73,7 +73,7 @@ namespace bmd
     void pingStreams();
     void pongStream(const std::shared_ptr<bb::network::ws::Stream>& stream);
     void checkPongs();
-    uint32_t _timeBetweenPingPong = 10; //seconds -> wait 25s to ping + 25s to check pongs and ping again
+    uint32_t _timeBetweenPingPong = 5; //seconds -> wait 25s to ping + 25s to check pongs and ping again
     std::mutex _streamsMutex;
 
     void reconnectionHandlerFuturesUsdAggTradeStream(std::shared_ptr<bb::network::ws::Stream> stream,
