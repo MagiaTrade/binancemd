@@ -7,7 +7,7 @@
 
 TEST_CASE("STREAMS", "[streams]")
 {
-  bmd::BMDManager manager;
+  auto manager = std::make_shared<bmd::BMDManager>();
 
   std::promise<bool> sendPromise;
   std::future<bool> sendFuture = sendPromise.get_future();
@@ -15,21 +15,21 @@ TEST_CASE("STREAMS", "[streams]")
   std::shared_ptr<bb::network::rs::Stream> streamPtr;
 
   int countMsgs = 0;
-  manager.openFutureAggTradeStream(
+  manager->openFutureAggTradeStream(
     "btcusdt",
     20,
-    [&](bool success, const bmd::futuresUSD::models::AggTrade& aggTrade)
+    [&countMsgs, &sendPromise](bool success, const bmd::futuresUSD::models::AggTrade& aggTrade)
     {
       countMsgs++;
       if(success)
       {
         logI << "Price: " << aggTrade.price
              << " Amount: " << aggTrade.amount
-             << " Time: " << aggTrade.time;
+             << " Time: " << aggTrade.lastTradeExecutedTime;
 
         REQUIRE(aggTrade.price != dNaN);
         REQUIRE( aggTrade.amount != dNaN);
-        REQUIRE(aggTrade.amount != INVALID_INT64);
+        REQUIRE(aggTrade.lastTradeExecutedTime != INVALID_INT64);
       }
       else
       {
