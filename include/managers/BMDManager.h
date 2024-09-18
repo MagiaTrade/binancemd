@@ -19,7 +19,7 @@ namespace bmd
   using ScheduleCallback = std::function<void(bool success)>;
 
 
-  class BMDManager
+  class BMDManager : public std::enable_shared_from_this<BMDManager>
   {
   public:
     explicit BMDManager();

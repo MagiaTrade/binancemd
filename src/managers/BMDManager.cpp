@@ -55,14 +55,14 @@ namespace bmd
             "443",
             "/ws/" + cpSymbol + "@aggTrade",
             true,
-            [&, aggTradeCB, cb, symbolCode, reconnectInSeconds](bool success, const std::string& data, SharedStream stream)
+            [self = shared_from_this(), aggTradeCB, cb, symbolCode, reconnectInSeconds](bool success, const std::string& data, SharedStream stream)
             {
               if(!success)
               {
                 std::cout << "Futures Stream @aggTrade closed with msg: " << data << "\n\n";
                 aggTradeCB(false, futuresUSD::models::AggTrade());
                 //two seconds to attempt to connect again if it not succeeds
-                scheduleTaskAfter(_timeToReconnectOnError, _timerFuturesUsdAggTradeStream,[&, stream, symbolCode, reconnectInSeconds, aggTradeCB, cb](bool success)
+                self->scheduleTaskAfter(self->_timeToReconnectOnError,self->_timerFuturesUsdAggTradeStream,[self, stream, symbolCode, reconnectInSeconds, aggTradeCB, cb](bool success)
                 {
                   if(!success)
                   {
@@ -70,7 +70,7 @@ namespace bmd
                     return;
                   }
 
-                  reconnectionHandlerFuturesUsdAggTradeStream(stream,
+                  self->reconnectionHandlerFuturesUsdAggTradeStream(stream,
                                                               symbolCode,
                                                               reconnectInSeconds,
                                                               aggTradeCB,
@@ -97,14 +97,14 @@ namespace bmd
 
     auto sharedStream = stream.lock();
     sharedStream->setCloseStreamCallback(
-        [&,
+        [self = shared_from_this(),
             symbolCode,
             aggTradeCB,
             reconnectInSeconds,
             cb]
             (SharedStream closedStream){
 
-          reconnectionHandlerFuturesUsdAggTradeStream(closedStream,
+          self->reconnectionHandlerFuturesUsdAggTradeStream(closedStream,
                                                       symbolCode,
                                                       reconnectInSeconds,
                                                       aggTradeCB,
@@ -155,19 +155,19 @@ namespace bmd
     _streams.emplace(newStreamId, stream);
 
     scheduleTaskAfterForTimer(reconnectInSeconds, traderStreamTimer,
-                              [&, stream, symbolCode, aggTradeCB, reconnectInSeconds, cb] (bool timerSuccess)
-                              {
-                                //it can be destructed by other reason ex: pong check, so just returns
-                                if(!timerSuccess)
-                                  return;
+      [self = shared_from_this(), stream, symbolCode, aggTradeCB, reconnectInSeconds, cb] (bool timerSuccess)
+      {
+        //it can be destructed by other reason ex: pong check, so just returns
+        if(!timerSuccess)
+          return;
 
-                                reconnectionHandlerFuturesUsdAggTradeStream(stream,
-                                                                            symbolCode,
-                                                                            reconnectInSeconds,
-                                                                            aggTradeCB,
-                                                                            true,
-                                                                            cb);
-                              });
+        self->reconnectionHandlerFuturesUsdAggTradeStream(stream,
+                                                    symbolCode,
+                                                    reconnectInSeconds,
+                                                    aggTradeCB,
+                                                    true,
+                                                    cb);
+      });
 
 
     //call the callback warning the client that streams changed
@@ -189,8 +189,8 @@ namespace bmd
     _tradeStreamsTimers.insert_or_assign(stream->getId(), tradeStreamTimer);
 
     scheduleTaskAfterForTimer(reconnectInSeconds, tradeStreamTimer,
-                              [&, reconnectInSeconds, stream, symbol, aggTradeCB, cb](bool success) {
-                                reconnectionHandlerFuturesUsdAggTradeStream(stream,
+                              [self = shared_from_this(), reconnectInSeconds, stream, symbol, aggTradeCB, cb](bool success) {
+                                self->reconnectionHandlerFuturesUsdAggTradeStream(stream,
                                                                             symbol,
                                                                             reconnectInSeconds,
                                                                             aggTradeCB,
@@ -208,7 +208,7 @@ namespace bmd
   {
     timer = std::make_shared<boost::asio::steady_timer>(_ioc);
     timer->expires_after(std::chrono::seconds(seconds));
-    timer->async_wait([&, cb](const boost::system::error_code& error)
+    timer->async_wait([cb](const boost::system::error_code& error)
     {
       if (!error)
       {
@@ -225,7 +225,7 @@ namespace bmd
                                           const ScheduleCallback& cb)
                                           {
     timer->expires_after(std::chrono::seconds(seconds));
-    timer->async_wait([&, cb](const boost::system::error_code& error)
+    timer->async_wait([cb](const boost::system::error_code& error)
     {
       if (!error)
       {
