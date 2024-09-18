@@ -121,11 +121,6 @@ namespace bmd
               cb);
         });
 
-    sharedStream->setPongStreamCallback([&](const std::shared_ptr<bb::network::ws::Stream>& stream)
-    {
-      logW << "Stream pong received!";
-    });
-
     sharedStream->setPingStreamCallback([&](const std::shared_ptr<bb::network::ws::Stream>& stream)
     {
       logW << "Stream ping received!";
