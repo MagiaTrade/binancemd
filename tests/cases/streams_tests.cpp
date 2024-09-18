@@ -9,21 +9,18 @@ TEST_CASE("STREAMS", "[streams]")
 {
   auto manager = bmd::BMDManager::create();
 
-  std::promise<bool> sendPromise;
-  std::future<bool> sendFuture = sendPromise.get_future();
+  auto countMsgs = std::make_shared<int>(0);
+  auto sendPromise = std::make_shared<std::promise<bool>>();
+  std::future<bool> sendFuture = sendPromise->get_future();
 
-  int countMsgs = 0;
   manager->openFutureAggTradeStream(
     "btcusdt",
     20,
-    [&countMsgs, &sendPromise](bool success, const bmd::futuresUSD::models::AggTrade& aggTrade)
+    [countMsgs, sendPromise](bool success, const bmd::futuresUSD::models::AggTrade& aggTrade) mutable
     {
-      countMsgs++;
-      if(countMsgs > 10)
-      {
-        sendPromise.set_value(true);
+      (*countMsgs)++;
+      if((*countMsgs) > 10)
         return;
-      }
 
       if(success)
       {
@@ -39,8 +36,11 @@ TEST_CASE("STREAMS", "[streams]")
       }
       else
       {
-        sendPromise.set_value(true);
+        sendPromise->set_value(true);
       }
+
+      if( (*countMsgs) == 10)
+        sendPromise->set_value(true);
     },
     [&](uint32_t newStreamId, uint32_t oldStreamId){
 
@@ -49,5 +49,7 @@ TEST_CASE("STREAMS", "[streams]")
 
   sendFuture.wait();
 
-  REQUIRE(countMsgs >= 10);
+  REQUIRE( (*countMsgs) >= 10 );
+
+  manager.reset();
 }

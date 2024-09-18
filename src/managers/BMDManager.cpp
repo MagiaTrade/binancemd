@@ -55,23 +55,12 @@ namespace bmd
 
   BMDManager::~BMDManager()
   {
-//    std::promise<bool> pStopped;
-//    std::future<bool> fStopped = pStopped.get_future();
-//    for(auto &kv : _streams)
-//    {
-//      kv.second.stream->setCloseStreamCallback(
-//          [&pStopped](auto stream)
-//          {
-//            pStopped.set_value(true);
-//          });
-//    }
-//    fStopped.wait();
-
-    _streams.clear();
     _workGuard.reset(); // Allow io_context to stop when no work remains
     _ioc.stop();
     if(_worker.joinable())
       _worker.join();
+
+    _streams.clear();
   }
 
   std::shared_ptr< bb::network::ws::Stream> BMDManager::createFuturesUsdAggTradeStream(
