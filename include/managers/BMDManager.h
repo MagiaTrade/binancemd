@@ -16,7 +16,13 @@
 
 namespace bmd
 {
-  using FuturesUsdAggTradeStreamCallback = std::function<void(bool, const futuresUSD::models::AggTrade& aggTrade)>;
+  enum class BinanceServiceType
+  {
+    SPOT,
+    FUTURES
+  };
+
+  using AggTradeStreamCallback = std::function<void(bool, const futuresUSD::models::AggTrade& aggTrade)>;
   using ReconnetUserDataStreamCallback = std::function<void(uint32_t newStreamId, uint32_t oldStreamId)>;
   using ScheduleCallback = std::function<void(bool success)>;
 
@@ -38,10 +44,11 @@ namespace bmd
      * @param cb Callback invoked when the stream is reconnected.
      * @return The ID of the opened stream.
      */
-    uint32_t openFutureAggTradeStream(const std::string& symbol,
-                                      uint32_t reconnectInSeconds,
-                                      const FuturesUsdAggTradeStreamCallback& aggTradeCB,
-                                      const ReconnetUserDataStreamCallback& cb);
+    uint32_t openAggTradeStream(BinanceServiceType type,
+                                const std::string& symbol,
+                                uint32_t reconnectInSeconds,
+                                const AggTradeStreamCallback& aggTradeCB,
+                                const ReconnetUserDataStreamCallback& cb);
 
     void closeStream(uint32_t streamID);
 
@@ -71,17 +78,19 @@ namespace bmd
 
     std::mutex _streamsMutex;
 
-    void reconnectionHandlerFuturesUsdAggTradeStream(std::shared_ptr<bb::network::ws::Stream> stream,
-                                                     const std::string& symbolCode,
-                                                     uint32_t reconnectInSeconds,
-                                                     const FuturesUsdAggTradeStreamCallback& tradeCB,
-                                                     bool timerSuccess,
-                                                     const ReconnetUserDataStreamCallback& cb);
+    void reconnectionHandlerAggTradeStream(std::shared_ptr<bb::network::ws::Stream> stream,
+                                           BinanceServiceType type,
+                                           const std::string& symbolCode,
+                                           uint32_t reconnectInSeconds,
+                                           const AggTradeStreamCallback& tradeCB,
+                                           bool timerSuccess,
+                                           const ReconnetUserDataStreamCallback& cb);
 
-    std::shared_ptr< bb::network::ws::Stream> createFuturesUsdAggTradeStream(
+    std::shared_ptr< bb::network::ws::Stream> createAggTradeStream(
+        BinanceServiceType type,
         const std::string& symbolCode,
         uint32_t reconnectInSeconds,
-        const FuturesUsdAggTradeStreamCallback& aggTradeCB,
+        const AggTradeStreamCallback& aggTradeCB,
         const ReconnetUserDataStreamCallback& cb);
   };
 }

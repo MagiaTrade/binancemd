@@ -57,17 +57,19 @@ namespace bmd
     _streams.clear();
   }
 
-  std::shared_ptr< bb::network::ws::Stream> BMDManager::createFuturesUsdAggTradeStream(
+  std::shared_ptr< bb::network::ws::Stream> BMDManager::createAggTradeStream(
+      BinanceServiceType type,
       const std::string& symbolCode,
       uint32_t reconnectInSeconds,
-      const FuturesUsdAggTradeStreamCallback& aggTradeCB,
+      const AggTradeStreamCallback& aggTradeCB,
       const ReconnetUserDataStreamCallback& cb)
   {
     auto cpSymbol = mgutils::string::toLower(symbolCode);
 
+    auto url = ( type == BinanceServiceType::SPOT ) ? _spotSocketBaseUrl : _futuresUsdSocketBaseUrl;
     std::weak_ptr<bb::network::ws::Stream> stream =
         _streamer->openStream(
-            _spotSocketBaseUrl,
+            url,
             "443",
             "/ws/" + cpSymbol + "@aggTrade",
             true,
@@ -104,15 +106,11 @@ namespace bmd
 
     auto sharedStream = stream.lock();
     sharedStream->setCloseStreamCallback(
-        [self = shared_from_this(),
-            symbolCode,
-            aggTradeCB,
-            reconnectInSeconds,
-            cb]
-            (SharedStream closedStream)
+        [self = shared_from_this(), symbolCode, aggTradeCB, reconnectInSeconds, type, cb] (SharedStream closedStream)
         {
-          self->reconnectionHandlerFuturesUsdAggTradeStream(
+          self->reconnectionHandlerAggTradeStream(
               closedStream,
+              type,
               symbolCode,
               reconnectInSeconds,
               aggTradeCB,
@@ -122,16 +120,17 @@ namespace bmd
 
     sharedStream->setPingStreamCallback([&](const std::shared_ptr<bb::network::ws::Stream>& stream)
     {
-      logW << "Stream ping received!";
+      logD << "Stream ping received!";
     });
 
     return std::move(sharedStream);
   }
 
-  void BMDManager::reconnectionHandlerFuturesUsdAggTradeStream(
+  void BMDManager::reconnectionHandlerAggTradeStream(
       std::shared_ptr<bb::network::ws::Stream> stream,
+      BinanceServiceType type,
       const std::string &symbolCode, uint32_t reconnectInSeconds,
-      const FuturesUsdAggTradeStreamCallback &aggTradeCB,
+      const AggTradeStreamCallback &aggTradeCB,
       bool timerSuccess,
       const ReconnetUserDataStreamCallback &cb)
   {
@@ -143,7 +142,8 @@ namespace bmd
       return;
     }
 
-    if (!timerSuccess) {
+    if (!timerSuccess)
+    {
       logC << "Futures Trade stream: Time expired error!";
       return;
     }
@@ -152,9 +152,8 @@ namespace bmd
 
     auto oldStreamId = stream->getId();
     stream->stop();
-    stream = createFuturesUsdAggTradeStream(symbolCode,reconnectInSeconds,aggTradeCB,cb);
+    stream = createAggTradeStream(type, symbolCode, reconnectInSeconds, aggTradeCB, cb);
     auto newStreamId = stream->getId();
-
 
     // Update the StreamInfo Map
     auto it = _streams.find(oldStreamId);
@@ -174,14 +173,16 @@ namespace bmd
     scheduleTaskAfter(
       reconnectInSeconds,
       tradeStreamTimer,
-      [self = shared_from_this(), stream, symbolCode, aggTradeCB, reconnectInSeconds, cb] (bool timerSuccess)
+      [self = shared_from_this(), stream, symbolCode, aggTradeCB, reconnectInSeconds, type, cb] (bool timerSuccess)
       {
-        //it can be destructed by other reason ex: pong check, so just returns
+        // It can be destructed by other reasons other than expiring.
+        // In these cases just return.
         if(!timerSuccess)
           return;
 
-        self->reconnectionHandlerFuturesUsdAggTradeStream(
+        self->reconnectionHandlerAggTradeStream(
             stream,
+            type,
             symbolCode,
             reconnectInSeconds,
             aggTradeCB,
@@ -195,17 +196,18 @@ namespace bmd
       cb(newStreamId, oldStreamId);
   }
 
-  uint32_t BMDManager::openFutureAggTradeStream(
+  uint32_t BMDManager::openAggTradeStream(
+      BinanceServiceType type,
       const std::string& symbol,
       uint32_t reconnectInSeconds,
-      const FuturesUsdAggTradeStreamCallback& aggTradeCB,
+      const AggTradeStreamCallback& aggTradeCB,
       const ReconnetUserDataStreamCallback& cb)
   {
     std::lock_guard<std::mutex> lock(_streamsMutex);
 
     auto cpSymbol = mgutils::string::toLower(symbol);
 
-    auto stream = createFuturesUsdAggTradeStream(symbol, reconnectInSeconds, aggTradeCB, cb);
+    auto stream = createAggTradeStream(type, symbol, reconnectInSeconds, aggTradeCB, cb);
     auto tradeStreamTimer = std::make_shared<boost::asio::steady_timer>(_ioc);
 
     StreamInfo streamInfo{stream, tradeStreamTimer};
@@ -213,10 +215,11 @@ namespace bmd
     scheduleTaskAfter(
         reconnectInSeconds,
         tradeStreamTimer,
-        [self = shared_from_this(), reconnectInSeconds, stream, symbol, aggTradeCB, cb](bool success)
+        [self = shared_from_this(), reconnectInSeconds, stream, symbol, aggTradeCB, type, cb](bool success)
           {
-            self->reconnectionHandlerFuturesUsdAggTradeStream(
+            self->reconnectionHandlerAggTradeStream(
                 stream,
+                type,
                 symbol,
                 reconnectInSeconds,
                 aggTradeCB,
