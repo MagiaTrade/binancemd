@@ -7,6 +7,6 @@
 
 #include "common/Logger.h"
 #include "managers/BMDManager.h"
-#include "models/futures/AggTrade.h"
+#include "models/AggTrade.h"
 
 #endif //BINANCEMARKETDATA_BINANCEMD_H

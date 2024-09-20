@@ -77,8 +77,8 @@ namespace bmd
             {
               if (!success)
               {
-                logW << "Futures Stream @aggTrade closed with msg: " << data;
-                aggTradeCB(false, futuresUSD::models::AggTrade());
+                logW << "Stream @aggTrade closed with msg: " << data;
+                aggTradeCB(false, models::AggTrade());
 
                 // Stop the stream, which will trigger the close callback
                 stream->stopWithCloseCallbackTriggered();
@@ -88,7 +88,7 @@ namespace bmd
               try
               {
                 auto document = mgutils::Json::parse(data);
-                futuresUSD::models::AggTrade aggTrade;
+                models::AggTrade aggTrade;
                 aggTrade.deserialize(document);
                 aggTradeCB(success, aggTrade);
               }

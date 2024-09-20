@@ -12,7 +12,7 @@
 
 #include <beastboys>
 
-#include "models/futures/AggTrade.h"
+#include "models/AggTrade.h"
 
 namespace bmd
 {
@@ -22,7 +22,7 @@ namespace bmd
     FUTURES
   };
 
-  using AggTradeStreamCallback = std::function<void(bool, const futuresUSD::models::AggTrade& aggTrade)>;
+  using AggTradeStreamCallback = std::function<void(bool, const models::AggTrade& aggTrade)>;
   using ReconnetUserDataStreamCallback = std::function<void(uint32_t newStreamId, uint32_t oldStreamId)>;
   using ScheduleCallback = std::function<void(bool success)>;
 

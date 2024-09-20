@@ -10,7 +10,7 @@
 #include <mgutils/Utils.h>
 #include <mgutils/json/JsonValue.h>
 
-namespace bmd::futuresUSD::models
+namespace bmd::models
 {
   struct AggTrade
   {

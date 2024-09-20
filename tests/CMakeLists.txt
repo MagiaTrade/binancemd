@@ -9,7 +9,8 @@ endif()
 
 add_executable(${PROJECT_NAME}
     main.cpp
-    cases/streams_tests.cpp
+    cases/fut_streams_tests.cpp
+    cases/spot_streams_tests.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}  PRIVATE
