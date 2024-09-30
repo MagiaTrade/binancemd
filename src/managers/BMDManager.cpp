@@ -6,10 +6,10 @@
 #endif
 
 #include <mgutils/Utils.h>
+#include <mgutils/Logger.h>
 #include <mgutils/Exceptions.h>
 #include <mgutils/Json.h>
 
-#include "common/Logger.h"
 #include "managers/BMDManager.h"
 
 namespace bmd
