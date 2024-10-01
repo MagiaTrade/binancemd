@@ -16,7 +16,7 @@ namespace bmd
 {
   std::shared_ptr<BMDManager> BMDManager::create()
   {
-// Use a private constructor and create a shared_ptr
+    // Use a private constructor and create a shared_ptr
     auto instance = std::shared_ptr<BMDManager>(new BMDManager());
 
     // Now that the instance is managed by a shared_ptr, shared_from_this() will work
