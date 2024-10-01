@@ -28,12 +28,16 @@ namespace bmd
   void BMDManager::initialize()
   {
     _streamer = std::make_shared<bb::Streamer>();
-    _worker = std::thread([&]() {
+    auto self = shared_from_this(); // Captura um shared_ptr de si mesmo
+    _worker = std::thread([self]() {
 #ifdef __APPLE__
       pthread_setname_np("BMD-Manager-Worker");
 #endif
       try {
-        _ioc.run();
+        while (!self->_stopWorker)
+        {
+          self->_ioc.run_one();
+        }
       }
       catch (const boost::system::system_error &e)
       {
@@ -50,9 +54,15 @@ namespace bmd
   {
     logW << "BMDManager destructor";
     _workGuard.reset(); // Allow io_context to stop when no work remains
+    _stopWorker = true;
     _ioc.stop();
     if(_worker.joinable())
-      _worker.join();
+    {
+      if (std::this_thread::get_id() == _worker.get_id())
+        logE << "Destructor called from worker thread; cannot join from within the same thread.";
+      else
+        _worker.join();
+    }
 
     _streams.clear();
   }
@@ -118,7 +128,7 @@ namespace bmd
               cb);
         });
 
-    sharedStream->setPingStreamCallback([&](const std::shared_ptr<bb::network::ws::Stream>& stream)
+    sharedStream->setPingStreamCallback([](const std::shared_ptr<bb::network::ws::Stream>& stream)
     {
       logD << "Stream ping received!";
     });

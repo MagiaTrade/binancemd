@@ -71,6 +71,7 @@ namespace bmd
     boost::asio::io_context _ioc;
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> _workGuard;
     std::thread _worker;
+    std::atomic<bool> _stopWorker{false};
 
     static void scheduleTaskAfter(uint32_t seconds,
                                    const std::shared_ptr<boost::asio::steady_timer>& timer,
