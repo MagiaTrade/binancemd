@@ -25,7 +25,7 @@ namespace bmd
   using AggTradeStreamCallback = std::function<void(bool, const models::AggTrade& aggTrade)>;
   using ReconnetUserDataStreamCallback = std::function<void(uint32_t newStreamId, uint32_t oldStreamId)>;
   using ScheduleCallback = std::function<void(bool success)>;
-
+  using HeartBeatCallback = std::function<void(void)>;
 
   class BMDManager : public std::enable_shared_from_this<BMDManager>
   {
@@ -52,6 +52,8 @@ namespace bmd
 
     void closeStream(uint32_t streamID);
 
+    void setHeartBeatCallback(const HeartBeatCallback& hearBeat);
+
   private:
     explicit BMDManager();
     void initialize();
@@ -72,6 +74,8 @@ namespace bmd
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> _workGuard;
     std::thread _worker;
     std::atomic<bool> _stopWorker{false};
+
+    HeartBeatCallback _heartBeatCallback;
 
     static void scheduleTaskAfter(uint32_t seconds,
                                    const std::shared_ptr<boost::asio::steady_timer>& timer,
@@ -94,5 +98,6 @@ namespace bmd
         const AggTradeStreamCallback& aggTradeCB,
         const ReconnetUserDataStreamCallback& cb);
   };
+
 }
 #endif //BINANCEMD_BMDMANAGER_H

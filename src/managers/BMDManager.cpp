@@ -128,9 +128,10 @@ namespace bmd
               cb);
         });
 
-    sharedStream->setPingStreamCallback([](const std::shared_ptr<bb::network::ws::Stream>& stream)
+    sharedStream->setPingStreamCallback([this](const std::shared_ptr<bb::network::ws::Stream>& stream)
     {
-      logD << "Stream ping received!";
+      if(_heartBeatCallback)
+        _heartBeatCallback();
     });
 
     return std::move(sharedStream);
@@ -274,5 +275,11 @@ namespace bmd
       logW << "Stream " << streamID << " not found to close.";
     }
   }
+
+  void BMDManager::setHeartBeatCallback(const HeartBeatCallback& hearBeat)
+  {
+    _heartBeatCallback = hearBeat;
+  }
+
 
 }
