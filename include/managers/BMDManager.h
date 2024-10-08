@@ -11,9 +11,11 @@
 #include <vector>
 
 #include <beastboys>
+#include <boost/asio.hpp> // Para usar boost::asio::steady_timer e strand
 
 #include <mgutils/HeartBeatChecker.h>
-#include <mgutils/Scheduler.h>
+// Remova a inclusão do Scheduler
+// #include <mgutils/Scheduler.h>
 
 #include "models/AggTrade.h"
 
@@ -64,8 +66,11 @@ namespace bmd
     struct StreamInfo
     {
       std::shared_ptr<bb::network::ws::Stream> stream;
-      std::unique_ptr<mgutils::Scheduler> scheduler;
+      // Removido o Scheduler
+      // std::unique_ptr<mgutils::Scheduler> scheduler;
       std::unique_ptr<mgutils::HeartBeatChecker> heartBeatChecker;
+      // Adicionado o reconnectTimer
+      std::unique_ptr<boost::asio::steady_timer> reconnectTimer;
     };
     StreamInfo createStreamInfo(
         const std::shared_ptr<bb::network::ws::Stream>& stream,
@@ -89,11 +94,15 @@ namespace bmd
     std::thread _worker;
     std::atomic<bool> _stopWorker{false};
 
-    uint64_t _heartBeatTimeOutInMillis = 60*1000*4; //four minutes
+    uint64_t _heartBeatTimeOutInMillis = 10000; //60*1000*4; //four minutes
 
     HeartBeatCallback _heartBeatCallback;
 
-//    std::mutex _streamsMutex;
+    // Removido o mutex
+    // std::mutex _streamsMutex;
+
+    // Adicionado strand para sincronização
+    boost::asio::strand<boost::asio::io_context::executor_type> strand_;
 
     void reconnectionHandlerAggTradeStream(std::shared_ptr<bb::network::ws::Stream> stream,
                                            BinanceServiceType type,
@@ -111,7 +120,6 @@ namespace bmd
 
     bool _shouldUseTestUrl = false;
 
-    mgutils::Scheduler _scheduler;
     void triggerStreamReconnection(
         uint32_t delayInSec,
         const std::shared_ptr<bb::network::ws::Stream>& stream,

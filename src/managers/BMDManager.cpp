@@ -43,7 +43,8 @@ namespace bmd
   }
 
   BMDManager::BMDManager():
-  _workGuard(boost::asio::make_work_guard(_ioc))
+      _workGuard(boost::asio::make_work_guard(_ioc)),
+      strand_(_ioc.get_executor()) // Inicializa o strand
   {}
 
   BMDManager::~BMDManager()
@@ -111,29 +112,35 @@ namespace bmd
 
     auto sharedStream = stream.lock();
     sharedStream->setCloseStreamCallback(
-      [self = shared_from_this(), symbolCode, aggTradeCB, reconnectInSeconds, type, cb] (SharedStream closedStream)
-      {
-        logW << "[BMDManager] Close callback triggered for stream (" << closedStream->getId() << "). Reconnecting in 5 seconds ...";
-        self->triggerStreamReconnection(5, closedStream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
-      });
+        [self = shared_from_this(), symbolCode, aggTradeCB, reconnectInSeconds, type, cb] (SharedStream closedStream)
+        {
+          // Posta a operação no strand para garantir a sincronização
+          boost::asio::post(self->strand_, [self, closedStream, symbolCode, aggTradeCB, reconnectInSeconds, type, cb]() {
+            logW << "[BMDManager] Close callback triggered for stream (" << closedStream->getId() << "). Reconnecting in 5 seconds ...";
+            self->triggerStreamReconnection(5, closedStream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
+          });
+        });
 
     sharedStream->setPingStreamCallback([this](const std::shared_ptr<bb::network::ws::Stream>& stream)
-    {
-      if(_heartBeatCallback)
-        _heartBeatCallback();
+                                        {
+                                          if(_heartBeatCallback)
+                                            _heartBeatCallback();
 
-      // Restart the heartbeat for stream
-      auto it = _streams.find(stream->getId());
-      if (it != _streams.end())
-      {
-        it->second.heartBeatChecker->restart();
-      }
-      else
-      {
-        logE << "Stream not tracked! Something wrong! Stream Id (" << stream->getId() << ")";
-        assert(false && "Stream not tracked! Something wrong!");
-      }
-    });
+                                          // Restart the heartbeat for stream
+                                          auto self = shared_from_this();
+                                          boost::asio::post(strand_, [this, self, stream]() {
+                                            auto it = _streams.find(stream->getId());
+                                            if (it != _streams.end())
+                                            {
+                                              it->second.heartBeatChecker->restart();
+                                            }
+                                            else
+                                            {
+                                              logE << "Stream not tracked! Something wrong! Stream Id (" << stream->getId() << ")";
+                                              assert(false && "Stream not tracked! Something wrong!");
+                                            }
+                                          });
+                                        });
 
     return std::move(sharedStream);
   }
@@ -146,49 +153,40 @@ namespace bmd
       const AggTradeStreamCallback &aggTradeCB,
       const ReconnetUserDataStreamCallback &cb)
   {
-    {
-//      std::lock_guard<std::mutex> lock(_streamsMutex);
+    auto self = shared_from_this();
+    boost::asio::post(strand_, [self, stream, type, symbolCode, reconnectInSeconds, aggTradeCB, cb]() mutable {
       if (stream->wasClosedByClient())
       {
-        logI << "Stream " << stream->getId() << " has been closed, skipping reconnection.";
+        logI << "Stream " << stream->getId() << " has been closed by client, skipping reconnection.";
         return;
       }
-    }
 
-    logI << "[BMDManager] Reconnecting stream (" << stream->getId() << ") for " << (type == BinanceServiceType::SPOT ? "spot" : "futures ") << symbolCode << " , reconnecting..";
+      logI << "[BMDManager] Reconnecting stream (" << stream->getId() << ") for " << (type == BinanceServiceType::SPOT ? "spot" : "futures ") << symbolCode << " , reconnecting..";
 
-    auto oldStreamId = stream->getId();
-    stream->stop();
-    stream = createAggTradeStream(type, symbolCode, reconnectInSeconds, aggTradeCB, cb);
-    logI << "Stream " << stream->getId() << " created!";
-    auto newStreamId = stream->getId();
+      auto oldStreamId = stream->getId();
+      stream->stop();
+      stream = self->createAggTradeStream(type, symbolCode, reconnectInSeconds, aggTradeCB, cb);
+      logI << "Stream " << stream->getId() << " created!";
+      auto newStreamId = stream->getId();
 
-    // Update the StreamInfo Map
-    {
-//      std::lock_guard<std::mutex> lock(_streamsMutex);
-      auto it = _streams.find(oldStreamId);
-      if (it != _streams.end())
+      // Update the StreamInfo Map
+      auto it = self->_streams.find(oldStreamId);
+      if (it != self->_streams.end())
       {
         // Remove the old entry
-        _streams.erase(it);
+        self->_streams.erase(it);
       }
-    }
 
-    auto streamInfo = createStreamInfo(stream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
+      auto streamInfo = self->createStreamInfo(stream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
 
-    {
-//      std::lock_guard<std::mutex> lock(_streamsMutex);
-      auto it = _streams.emplace(newStreamId, std::move(streamInfo));
+      self->_streams.emplace(newStreamId, std::move(streamInfo));
       logI << "Stream " << newStreamId << " emplaced!";
 
-    }
-
-    // Call the callback to inform the client that streams have changed
-    if(cb)
-      cb(newStreamId, oldStreamId);
+      // Call the callback to inform the client that streams have changed
+      if(cb)
+        cb(newStreamId, oldStreamId);
+    });
   }
-
-
 
   uint32_t BMDManager::openAggTradeStream(
       BinanceServiceType type,
@@ -197,16 +195,27 @@ namespace bmd
       const AggTradeStreamCallback& aggTradeCB,
       const ReconnetUserDataStreamCallback& cb)
   {
-//    std::lock_guard<std::mutex> lock(_streamsMutex);
+    auto self = shared_from_this();
+    auto promise = std::make_shared<std::promise<uint32_t>>();
+    auto future = promise->get_future();
 
-    auto cpSymbol = mgutils::string::toLower(symbol);
+    if(_shouldUseTestUrl)
+      reconnectInSeconds = 30;
 
-    auto stream = createAggTradeStream(type, symbol, reconnectInSeconds, aggTradeCB, cb);
+    boost::asio::post(strand_, [this, self, type, symbol, reconnectInSeconds, aggTradeCB, cb, promise]() {
+      auto cpSymbol = mgutils::string::toLower(symbol);
 
-    auto streamInfo = createStreamInfo(stream, symbol, type, reconnectInSeconds, aggTradeCB, cb);
+      auto stream = createAggTradeStream(type, symbol, reconnectInSeconds, aggTradeCB, cb);
 
-    _streams.emplace(stream->getId(), std::move(streamInfo));
-    return stream->getId();
+      auto streamInfo = createStreamInfo(stream, symbol, type, reconnectInSeconds, aggTradeCB, cb);
+
+      _streams.emplace(stream->getId(), std::move(streamInfo));
+
+      promise->set_value(stream->getId());
+    });
+
+    // Como estamos em um contexto assíncrono, precisamos esperar o futuro
+    return future.get();
   }
 
   void BMDManager::triggerStreamReconnection(
@@ -218,26 +227,52 @@ namespace bmd
       const AggTradeStreamCallback& aggTradeCB,
       const ReconnetUserDataStreamCallback& cb)
   {
-    auto it = _streams.find(stream->getId());
-    if(it != _streams.end())
-    {
-      (*it).second.scheduler->start([self = shared_from_this(), stream, symbol, aggTradeCB, reconnectInSeconds, type, cb]()
+    auto self = shared_from_this();
+    boost::asio::post(strand_, [this, self, delayInSec, stream, symbol, type, reconnectInSeconds, aggTradeCB, cb]() {
+      auto it = _streams.find(stream->getId());
+      if(it != _streams.end())
       {
-        self->reconnectionHandlerAggTradeStream(stream, type, symbol, reconnectInSeconds, aggTradeCB, cb);
-      },
-      std::chrono::milliseconds(delayInSec*1000),
-      mgutils::Scheduler::Mode::OneShot);
-    }
-    else
-    {
-      logW << "[BMDManager] Stream (" << stream->getId() << ") not found to schedule a reconnection";
-      std::async(std::launch::async, [self = shared_from_this(), delayInSec, stream, type, symbol, reconnectInSeconds, aggTradeCB, cb](){
-        std::this_thread::sleep_for(std::chrono::seconds(delayInSec));
-        logW << "[BMDManager] Call reconnect";
-        self->reconnectionHandlerAggTradeStream(stream, type, symbol, reconnectInSeconds, aggTradeCB, cb);
-      });
-    }
+        it->second.reconnectTimer->cancel();
+        it->second.reconnectTimer->expires_after(std::chrono::seconds(delayInSec));
+        it->second.reconnectTimer->async_wait(
+          boost::asio::bind_executor(
+              strand_,
+              [self, stream, symbol, type, reconnectInSeconds, aggTradeCB, cb](const boost::system::error_code& ec)
+              {
+                if (!ec)
+                {
+                  self->reconnectionHandlerAggTradeStream(stream, type, symbol, reconnectInSeconds, aggTradeCB, cb);
+                }
+                else if (ec != boost::asio::error::operation_aborted)
+                {
+                  logE << "Error in reconnect timer: " << ec.message();
+                }
+              }
+          )
+        );
+      }
+      else
+      {
+        logW << "[BMDManager] Stream (" << stream->getId() << ") not found to schedule a reconnection";
+        // Posta a reconexão no strand para garantir a ordem
+        boost::asio::post(strand_, [self, delayInSec, stream, type, symbol, reconnectInSeconds, aggTradeCB, cb]() {
+          // Usa um timer do asio para agendar a reconexão
+          auto timer = std::make_shared<boost::asio::steady_timer>(self->_ioc, std::chrono::seconds(delayInSec));
+          timer->async_wait([self, stream, type, symbol, reconnectInSeconds, aggTradeCB, cb](const boost::system::error_code& ec) {
+            if (!ec)
+            {
+              self->reconnectionHandlerAggTradeStream(stream, type, symbol, reconnectInSeconds, aggTradeCB, cb);
+            }
+            else
+            {
+              logE << "Error in timer for reconnection: " << ec.message();
+            }
+          });
+        });
+      }
+    });
   }
+
   BMDManager::StreamInfo BMDManager::createStreamInfo(
       const std::shared_ptr<bb::network::ws::Stream>& stream,
       const std::string& symbol,
@@ -247,66 +282,101 @@ namespace bmd
       const ReconnetUserDataStreamCallback& cb)
   {
     StreamInfo streamInfo
-    {
+      {
         stream,
-        std::make_unique<mgutils::Scheduler>(),
         std::make_unique<mgutils::HeartBeatChecker>(_heartBeatTimeOutInMillis, [self = shared_from_this(), stream, symbol, aggTradeCB, reconnectInSeconds, type, cb]()
         {
           logW << "Heartbeat timeout for stream " << stream->getId() << ". Reconnecting in 5 seconds ...";
           self->triggerStreamReconnection(5, stream, symbol, type, reconnectInSeconds, aggTradeCB, cb);
-        })
-    };
+        }),
+        // Inicialize o reconnectTimer
+        std::make_unique<boost::asio::steady_timer>(_ioc)
+      };
 
-    streamInfo.scheduler->start(
-        [self = shared_from_this(), stream, symbol, aggTradeCB, type, reconnectInSeconds, cb]()
+    // Agende a reconexão usando o reconnectTimer
+    logW << "Schedule reconnect timer for stream " << stream->getId() << ". Reconnecting in " << reconnectInSeconds << " seconds";
+    streamInfo.reconnectTimer->expires_after(std::chrono::seconds(reconnectInSeconds));
+    streamInfo.reconnectTimer->async_wait(
+      boost::asio::bind_executor(
+        strand_,
+        [self = shared_from_this(), stream, symbol, type, reconnectInSeconds, aggTradeCB, cb](const boost::system::error_code& ec)
         {
-          logW << "Scheduler timeout for stream " << stream->getId() << ". Reconnecting...";
-          self->reconnectionHandlerAggTradeStream(
-              stream,
-              type,
-              symbol,
-              reconnectInSeconds,
-              aggTradeCB,
-              cb);
-        },
-        std::chrono::milliseconds(reconnectInSeconds*1000),
-        mgutils::Scheduler::Mode::OneShot
+          if (!ec)
+          {
+            logW << "Reconnect timer expired for stream " << stream->getId() << ". Reconnecting...";
+            self->reconnectionHandlerAggTradeStream(
+                stream,
+                type,
+                symbol,
+                reconnectInSeconds,
+                aggTradeCB,
+                cb);
+          }
+          else if (ec != boost::asio::error::operation_aborted)
+          {
+            logE << "Error in reconnect timer: " << ec.message();
+          }
+        }
+      )
     );
 
-    return std::move(streamInfo);
+    return streamInfo;
   }
+
 
   size_t BMDManager::getNumberOfStreams() const
   {
-    return _streams.size();
+    // Como é uma função const, precisamos garantir que não haja modificações
+    // Se o _streams for acessado apenas dentro do strand, isso está seguro
+    auto self = const_cast<BMDManager*>(this)->shared_from_this();
+    std::promise<size_t> promise;
+    auto future = promise.get_future();
+
+    boost::asio::post(strand_, [this, self, &promise]() {
+      promise.set_value(_streams.size());
+    });
+
+    return future.get();
   }
 
   void BMDManager::closeStream(uint32_t streamID)
   {
-//    std::lock_guard<std::mutex> lock(_streamsMutex);
-    auto it = _streams.find(streamID);
+    auto self = shared_from_this();
+    boost::asio::post(strand_, [this, self, streamID]() {
+      auto it = _streams.find(streamID);
 
-    if (it != _streams.end())
-    {
-      it->second.scheduler->stop();
-      it->second.heartBeatChecker->stop();
-      it->second.stream->stop();
-      _streams.erase(it);
-      logI << "Stream " << streamID << " closed successfully.";
-    } else
-    {
-      logW << "Stream " << streamID << " not found to close.";
-    }
+      if (it != _streams.end())
+      {
+        boost::system::error_code ec;
+        it->second.reconnectTimer->cancel(ec);
+        if (ec && ec != boost::asio::error::operation_aborted)
+          logE << "Error cancelling reconnectTimer for stream " << streamID << ": " << ec.message();
+
+        it->second.heartBeatChecker->stop();
+        it->second.stream->stop();
+        _streams.erase(it);
+        logI << "Stream " << streamID << " closed successfully.";
+      } else
+      {
+        logW << "Stream " << streamID << " not found to close.";
+      }
+    });
   }
 
   void BMDManager::setHeartBeatCallback(const HeartBeatCallback& hearBeat)
   {
-    _heartBeatCallback = hearBeat;
+    auto self = shared_from_this();
+    boost::asio::post(strand_, [this, self, hearBeat]() {
+      _heartBeatCallback = hearBeat;
+    });
   }
 
   void BMDManager::setUseTestsUrl()
   {
-    _shouldUseTestUrl = true;
+    auto self = shared_from_this();
+    boost::asio::post(strand_, [this, self]() {
+      _shouldUseTestUrl = true;
+    });
   }
 
 }
