@@ -64,15 +64,16 @@ namespace bmd
     struct StreamInfo
     {
       std::shared_ptr<bb::network::ws::Stream> stream;
-      std::shared_ptr<boost::asio::steady_timer> timer;
+      std::unique_ptr<mgutils::Scheduler> scheduler;
       std::unique_ptr<mgutils::HeartBeatChecker> heartBeatChecker;
     };
-    StreamInfo createStreamInfo( std::shared_ptr<bb::network::ws::Stream> stream,
-                                             const std::string& symbol,
-                                             BinanceServiceType type,
-                                             uint32_t reconnectInSeconds,
-                                             const AggTradeStreamCallback& aggTradeCB,
-                                             const ReconnetUserDataStreamCallback& cb);
+    StreamInfo createStreamInfo(
+        const std::shared_ptr<bb::network::ws::Stream>& stream,
+        const std::string& symbol,
+        BinanceServiceType type,
+        uint32_t reconnectInSeconds,
+        const AggTradeStreamCallback& aggTradeCB,
+        const ReconnetUserDataStreamCallback& cb);
 
     std::unordered_map<uint32_t, StreamInfo> _streams;
 
@@ -88,22 +89,17 @@ namespace bmd
     std::thread _worker;
     std::atomic<bool> _stopWorker{false};
 
-    uint64_t _heartBeatTimeOutInMillis = 20000; //60*1000*4; //four minutes
+    uint64_t _heartBeatTimeOutInMillis = 60*1000*4; //four minutes
 
     HeartBeatCallback _heartBeatCallback;
 
-    static void scheduleTaskAfter(uint32_t seconds,
-                                   const std::shared_ptr<boost::asio::steady_timer>& timer,
-                                   const ScheduleCallback& cb);
-
-    std::mutex _streamsMutex;
+//    std::mutex _streamsMutex;
 
     void reconnectionHandlerAggTradeStream(std::shared_ptr<bb::network::ws::Stream> stream,
                                            BinanceServiceType type,
                                            const std::string& symbolCode,
                                            uint32_t reconnectInSeconds,
                                            const AggTradeStreamCallback& tradeCB,
-                                           bool timerSuccess,
                                            const ReconnetUserDataStreamCallback& cb);
 
     std::shared_ptr< bb::network::ws::Stream> createAggTradeStream(
@@ -114,6 +110,17 @@ namespace bmd
         const ReconnetUserDataStreamCallback& cb);
 
     bool _shouldUseTestUrl = false;
+
+    mgutils::Scheduler _scheduler;
+    void triggerStreamReconnection(
+        uint32_t delayInSec,
+        const std::shared_ptr<bb::network::ws::Stream>& stream,
+        const std::string& symbol,
+        BinanceServiceType type,
+        uint32_t reconnectInSeconds,
+        const AggTradeStreamCallback& aggTradeCB,
+        const ReconnetUserDataStreamCallback& cb
+    );
   };
 
 }

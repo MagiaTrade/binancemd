@@ -80,15 +80,13 @@ namespace bmd
             _shouldUseTestUrl ?  _testsPort : "443" ,
             "/ws/" + cpSymbol + "@aggTrade",
             !_shouldUseTestUrl,
-            [self = shared_from_this(), aggTradeCB, cb, symbolCode](bool success, const std::string& data, SharedStream stream)
+            [self = shared_from_this(), aggTradeCB, cb, symbolCode, type, reconnectInSeconds](bool success, const std::string& data, SharedStream stream)
             {
               if (!success)
               {
-                logW << "Stream @aggTrade closed with msg: " << data;
+                logW << "Stream (" << stream->getId() << ") @aggTrade closed with msg: " << data;
                 aggTradeCB(false, models::AggTrade());
-
-                // Stop the stream, which will trigger the close callback
-                stream->stopWithCloseCallbackTriggered();
+                self->triggerStreamReconnection(5,stream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
                 return;
               }
 
@@ -113,17 +111,11 @@ namespace bmd
 
     auto sharedStream = stream.lock();
     sharedStream->setCloseStreamCallback(
-        [self = shared_from_this(), symbolCode, aggTradeCB, reconnectInSeconds, type, cb] (SharedStream closedStream)
-        {
-          self->reconnectionHandlerAggTradeStream(
-              closedStream,
-              type,
-              symbolCode,
-              reconnectInSeconds,
-              aggTradeCB,
-              true,
-              cb);
-        });
+      [self = shared_from_this(), symbolCode, aggTradeCB, reconnectInSeconds, type, cb] (SharedStream closedStream)
+      {
+        logW << "[BMDManager] Close callback triggered for stream (" << closedStream->getId() << "). Reconnecting in 5 seconds ...";
+        self->triggerStreamReconnection(5, closedStream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
+      });
 
     sharedStream->setPingStreamCallback([this](const std::shared_ptr<bb::network::ws::Stream>& stream)
     {
@@ -149,65 +141,54 @@ namespace bmd
   void BMDManager::reconnectionHandlerAggTradeStream(
       std::shared_ptr<bb::network::ws::Stream> stream,
       BinanceServiceType type,
-      const std::string &symbolCode, uint32_t reconnectInSeconds,
+      const std::string &symbolCode,
+      uint32_t reconnectInSeconds,
       const AggTradeStreamCallback &aggTradeCB,
-      bool timerSuccess,
       const ReconnetUserDataStreamCallback &cb)
   {
-    std::lock_guard<std::mutex> lock(_streamsMutex);
-
-    auto itStream = _streams.find(stream->getId());
-    if (itStream == _streams.end()) {
-      logI << "Stream " << stream->getId() << " has been closed, skipping reconnection.";
-      return;
-    }
-
-    if (!timerSuccess)
     {
-      logW << "Trade stream: Timer canceled for " << (type == BinanceServiceType::SPOT ? "spot" : "futures");
-      return;
+//      std::lock_guard<std::mutex> lock(_streamsMutex);
+      if (stream->wasClosedByClient())
+      {
+        logI << "Stream " << stream->getId() << " has been closed, skipping reconnection.";
+        return;
+      }
     }
 
-    logI << "Trade stream: Time expired for " << (type == BinanceServiceType::SPOT ? "spot" : "futures") << ", reconnecting..";
+    logI << "[BMDManager] Reconnecting stream (" << stream->getId() << ") for " << (type == BinanceServiceType::SPOT ? "spot" : "futures ") << symbolCode << " , reconnecting..";
 
     auto oldStreamId = stream->getId();
     stream->stop();
     stream = createAggTradeStream(type, symbolCode, reconnectInSeconds, aggTradeCB, cb);
+    logI << "Stream " << stream->getId() << " created!";
     auto newStreamId = stream->getId();
 
     // Update the StreamInfo Map
-    auto it = _streams.find(oldStreamId);
-    if (it != _streams.end())
     {
-      // Cancel the old timer
-      it->second.timer->cancel();
-      // Remove the old entry
-      _streams.erase(it);
+//      std::lock_guard<std::mutex> lock(_streamsMutex);
+      auto it = _streams.find(oldStreamId);
+      if (it != _streams.end())
+      {
+        // Remove the old entry
+        _streams.erase(it);
+      }
     }
 
     auto streamInfo = createStreamInfo(stream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
 
-    scheduleTaskAfter(
-      reconnectInSeconds,
-      streamInfo.timer,
-      [self = shared_from_this(), stream, symbolCode, aggTradeCB, reconnectInSeconds, type, cb] (bool timerSuccess)
-      {
-        self->reconnectionHandlerAggTradeStream(
-            stream,
-            type,
-            symbolCode,
-            reconnectInSeconds,
-            aggTradeCB,
-            timerSuccess,
-            cb);
-      });
+    {
+//      std::lock_guard<std::mutex> lock(_streamsMutex);
+      auto it = _streams.emplace(newStreamId, std::move(streamInfo));
+      logI << "Stream " << newStreamId << " emplaced!";
 
-    _streams.emplace(newStreamId, std::move(streamInfo));
+    }
 
     // Call the callback to inform the client that streams have changed
     if(cb)
       cb(newStreamId, oldStreamId);
   }
+
+
 
   uint32_t BMDManager::openAggTradeStream(
       BinanceServiceType type,
@@ -216,7 +197,7 @@ namespace bmd
       const AggTradeStreamCallback& aggTradeCB,
       const ReconnetUserDataStreamCallback& cb)
   {
-    std::lock_guard<std::mutex> lock(_streamsMutex);
+//    std::lock_guard<std::mutex> lock(_streamsMutex);
 
     auto cpSymbol = mgutils::string::toLower(symbol);
 
@@ -224,58 +205,75 @@ namespace bmd
 
     auto streamInfo = createStreamInfo(stream, symbol, type, reconnectInSeconds, aggTradeCB, cb);
 
-    scheduleTaskAfter(
-        reconnectInSeconds,
-        streamInfo.timer,
-        [self = shared_from_this(), reconnectInSeconds, stream, symbol, aggTradeCB, type, cb](bool success)
-          {
-            self->reconnectionHandlerAggTradeStream(
-                stream,
-                type,
-                symbol,
-                reconnectInSeconds,
-                aggTradeCB,
-                success,
-                cb);
-          });
-
     _streams.emplace(stream->getId(), std::move(streamInfo));
     return stream->getId();
   }
 
-  BMDManager::StreamInfo BMDManager::createStreamInfo(
-      std::shared_ptr<bb::network::ws::Stream> stream,
+  void BMDManager::triggerStreamReconnection(
+      uint32_t delayInSec,
+      const std::shared_ptr<bb::network::ws::Stream>& stream,
       const std::string& symbol,
       BinanceServiceType type,
       uint32_t reconnectInSeconds,
       const AggTradeStreamCallback& aggTradeCB,
       const ReconnetUserDataStreamCallback& cb)
   {
-    auto tradeStreamTimer = std::make_shared<boost::asio::steady_timer>(_ioc);
-
-    return StreamInfo
+    auto it = _streams.find(stream->getId());
+    if(it != _streams.end())
     {
-      stream,
-      tradeStreamTimer,
-      std::make_unique<mgutils::HeartBeatChecker>(_heartBeatTimeOutInMillis, [self = shared_from_this(), stream, symbol, aggTradeCB, reconnectInSeconds, type, cb]()
+      (*it).second.scheduler->start([self = shared_from_this(), stream, symbol, aggTradeCB, reconnectInSeconds, type, cb]()
       {
-        logW << "Heartbeat timeout for stream " << stream->getId() << ". Reconnecting...";
-        self->reconnectionHandlerAggTradeStream(stream, type, symbol, reconnectInSeconds, aggTradeCB, true, cb);
-      })
-    };
-  }
-
-
-  void BMDManager::scheduleTaskAfter(
-      uint32_t seconds,
-      const std::shared_ptr<boost::asio::steady_timer>& timer,
-      const ScheduleCallback& cb)
-  {
-    timer->expires_after(std::chrono::seconds(seconds));
-    timer->async_wait([cb](const boost::system::error_code& error)
+        self->reconnectionHandlerAggTradeStream(stream, type, symbol, reconnectInSeconds, aggTradeCB, cb);
+      },
+      std::chrono::milliseconds(delayInSec*1000),
+      mgutils::Scheduler::Mode::OneShot);
+    }
+    else
     {
-      cb(!error);
-    });
+      logW << "[BMDManager] Stream (" << stream->getId() << ") not found to schedule a reconnection";
+      std::async(std::launch::async, [self = shared_from_this(), delayInSec, stream, type, symbol, reconnectInSeconds, aggTradeCB, cb](){
+        std::this_thread::sleep_for(std::chrono::seconds(delayInSec));
+        logW << "[BMDManager] Call reconnect";
+        self->reconnectionHandlerAggTradeStream(stream, type, symbol, reconnectInSeconds, aggTradeCB, cb);
+      });
+    }
+  }
+  BMDManager::StreamInfo BMDManager::createStreamInfo(
+      const std::shared_ptr<bb::network::ws::Stream>& stream,
+      const std::string& symbol,
+      BinanceServiceType type,
+      uint32_t reconnectInSeconds,
+      const AggTradeStreamCallback& aggTradeCB,
+      const ReconnetUserDataStreamCallback& cb)
+  {
+    StreamInfo streamInfo
+    {
+        stream,
+        std::make_unique<mgutils::Scheduler>(),
+        std::make_unique<mgutils::HeartBeatChecker>(_heartBeatTimeOutInMillis, [self = shared_from_this(), stream, symbol, aggTradeCB, reconnectInSeconds, type, cb]()
+        {
+          logW << "Heartbeat timeout for stream " << stream->getId() << ". Reconnecting in 5 seconds ...";
+          self->triggerStreamReconnection(5, stream, symbol, type, reconnectInSeconds, aggTradeCB, cb);
+        })
+    };
+
+    streamInfo.scheduler->start(
+        [self = shared_from_this(), stream, symbol, aggTradeCB, type, reconnectInSeconds, cb]()
+        {
+          logW << "Scheduler timeout for stream " << stream->getId() << ". Reconnecting...";
+          self->reconnectionHandlerAggTradeStream(
+              stream,
+              type,
+              symbol,
+              reconnectInSeconds,
+              aggTradeCB,
+              cb);
+        },
+        std::chrono::milliseconds(reconnectInSeconds*1000),
+        mgutils::Scheduler::Mode::OneShot
+    );
+
+    return std::move(streamInfo);
   }
 
   size_t BMDManager::getNumberOfStreams() const
@@ -285,14 +283,14 @@ namespace bmd
 
   void BMDManager::closeStream(uint32_t streamID)
   {
-    std::lock_guard<std::mutex> lock(_streamsMutex);
+//    std::lock_guard<std::mutex> lock(_streamsMutex);
     auto it = _streams.find(streamID);
 
     if (it != _streams.end())
     {
-      it->second.timer->cancel();
-      it->second.stream->stop();
+      it->second.scheduler->stop();
       it->second.heartBeatChecker->stop();
+      it->second.stream->stop();
       _streams.erase(it);
       logI << "Stream " << streamID << " closed successfully.";
     } else
