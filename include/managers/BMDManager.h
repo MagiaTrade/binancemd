@@ -12,6 +12,9 @@
 
 #include <beastboys>
 
+#include <mgutils/HeartBeatChecker.h>
+#include <mgutils/Scheduler.h>
+
 #include "models/AggTrade.h"
 
 namespace bmd
@@ -53,7 +56,7 @@ namespace bmd
     void closeStream(uint32_t streamID);
 
     void setHeartBeatCallback(const HeartBeatCallback& hearBeat);
-
+    void setUseTestsUrl();
   private:
     explicit BMDManager();
     void initialize();
@@ -62,18 +65,30 @@ namespace bmd
     {
       std::shared_ptr<bb::network::ws::Stream> stream;
       std::shared_ptr<boost::asio::steady_timer> timer;
+      std::unique_ptr<mgutils::HeartBeatChecker> heartBeatChecker;
     };
+    StreamInfo createStreamInfo( std::shared_ptr<bb::network::ws::Stream> stream,
+                                             const std::string& symbol,
+                                             BinanceServiceType type,
+                                             uint32_t reconnectInSeconds,
+                                             const AggTradeStreamCallback& aggTradeCB,
+                                             const ReconnetUserDataStreamCallback& cb);
 
     std::unordered_map<uint32_t, StreamInfo> _streams;
 
     std::string _futuresUsdSocketBaseUrl = "fstream.binance.com";
     std::string _spotSocketBaseUrl = "stream.binance.com";
+    std::string _testsUrl = "localhost";
+    std::string _testsPort = "1234";
+
     std::shared_ptr<bb::Streamer> _streamer{nullptr};
 
     boost::asio::io_context _ioc;
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type> _workGuard;
     std::thread _worker;
     std::atomic<bool> _stopWorker{false};
+
+    uint64_t _heartBeatTimeOutInMillis = 20000; //60*1000*4; //four minutes
 
     HeartBeatCallback _heartBeatCallback;
 
@@ -97,6 +112,8 @@ namespace bmd
         uint32_t reconnectInSeconds,
         const AggTradeStreamCallback& aggTradeCB,
         const ReconnetUserDataStreamCallback& cb);
+
+    bool _shouldUseTestUrl = false;
   };
 
 }

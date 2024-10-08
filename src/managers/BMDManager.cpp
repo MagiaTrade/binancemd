@@ -16,12 +16,8 @@ namespace bmd
 {
   std::shared_ptr<BMDManager> BMDManager::create()
   {
-    // Use a private constructor and create a shared_ptr
     auto instance = std::shared_ptr<BMDManager>(new BMDManager());
-
-    // Now that the instance is managed by a shared_ptr, shared_from_this() will work
     instance->initialize();
-
     return instance;
   }
 
@@ -76,13 +72,14 @@ namespace bmd
   {
     auto cpSymbol = mgutils::string::toLower(symbolCode);
 
-    auto url = ( type == BinanceServiceType::SPOT ) ? _spotSocketBaseUrl : _futuresUsdSocketBaseUrl;
+    auto url = _shouldUseTestUrl ? _testsUrl : (( type == BinanceServiceType::SPOT ) ? _spotSocketBaseUrl : _futuresUsdSocketBaseUrl);
+
     std::weak_ptr<bb::network::ws::Stream> stream =
         _streamer->openStream(
             url,
-            "443",
+            _shouldUseTestUrl ?  _testsPort : "443" ,
             "/ws/" + cpSymbol + "@aggTrade",
-            true,
+            !_shouldUseTestUrl,
             [self = shared_from_this(), aggTradeCB, cb, symbolCode](bool success, const std::string& data, SharedStream stream)
             {
               if (!success)
@@ -132,6 +129,18 @@ namespace bmd
     {
       if(_heartBeatCallback)
         _heartBeatCallback();
+
+      // Restart the heartbeat for stream
+      auto it = _streams.find(stream->getId());
+      if (it != _streams.end())
+      {
+        it->second.heartBeatChecker->restart();
+      }
+      else
+      {
+        logE << "Stream not tracked! Something wrong! Stream Id (" << stream->getId() << ")";
+        assert(false && "Stream not tracked! Something wrong!");
+      }
     });
 
     return std::move(sharedStream);
@@ -155,11 +164,11 @@ namespace bmd
 
     if (!timerSuccess)
     {
-      logC << "Futures Trade stream: Time expired error!";
+      logW << "Trade stream: Timer canceled for " << (type == BinanceServiceType::SPOT ? "spot" : "futures");
       return;
     }
 
-    logI << "Futures Trade stream: Time expired, reconnecting..";
+    logI << "Trade stream: Time expired for " << (type == BinanceServiceType::SPOT ? "spot" : "futures") << ", reconnecting..";
 
     auto oldStreamId = stream->getId();
     stream->stop();
@@ -176,31 +185,24 @@ namespace bmd
       _streams.erase(it);
     }
 
-    auto tradeStreamTimer = std::make_shared<boost::asio::steady_timer>(_ioc);
-    StreamInfo streamInfo{stream, tradeStreamTimer};
-
-    _streams.emplace(newStreamId, std::move(streamInfo));
+    auto streamInfo = createStreamInfo(stream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
 
     scheduleTaskAfter(
       reconnectInSeconds,
-      tradeStreamTimer,
+      streamInfo.timer,
       [self = shared_from_this(), stream, symbolCode, aggTradeCB, reconnectInSeconds, type, cb] (bool timerSuccess)
       {
-        // It can be destructed by other reasons other than expiring.
-        // In these cases just return.
-        if(!timerSuccess)
-          return;
-
         self->reconnectionHandlerAggTradeStream(
             stream,
             type,
             symbolCode,
             reconnectInSeconds,
             aggTradeCB,
-            true,
+            timerSuccess,
             cb);
       });
 
+    _streams.emplace(newStreamId, std::move(streamInfo));
 
     // Call the callback to inform the client that streams have changed
     if(cb)
@@ -219,13 +221,12 @@ namespace bmd
     auto cpSymbol = mgutils::string::toLower(symbol);
 
     auto stream = createAggTradeStream(type, symbol, reconnectInSeconds, aggTradeCB, cb);
-    auto tradeStreamTimer = std::make_shared<boost::asio::steady_timer>(_ioc);
 
-    StreamInfo streamInfo{stream, tradeStreamTimer};
+    auto streamInfo = createStreamInfo(stream, symbol, type, reconnectInSeconds, aggTradeCB, cb);
 
     scheduleTaskAfter(
         reconnectInSeconds,
-        tradeStreamTimer,
+        streamInfo.timer,
         [self = shared_from_this(), reconnectInSeconds, stream, symbol, aggTradeCB, type, cb](bool success)
           {
             self->reconnectionHandlerAggTradeStream(
@@ -241,6 +242,29 @@ namespace bmd
     _streams.emplace(stream->getId(), std::move(streamInfo));
     return stream->getId();
   }
+
+  BMDManager::StreamInfo BMDManager::createStreamInfo(
+      std::shared_ptr<bb::network::ws::Stream> stream,
+      const std::string& symbol,
+      BinanceServiceType type,
+      uint32_t reconnectInSeconds,
+      const AggTradeStreamCallback& aggTradeCB,
+      const ReconnetUserDataStreamCallback& cb)
+  {
+    auto tradeStreamTimer = std::make_shared<boost::asio::steady_timer>(_ioc);
+
+    return StreamInfo
+    {
+      stream,
+      tradeStreamTimer,
+      std::make_unique<mgutils::HeartBeatChecker>(_heartBeatTimeOutInMillis, [self = shared_from_this(), stream, symbol, aggTradeCB, reconnectInSeconds, type, cb]()
+      {
+        logW << "Heartbeat timeout for stream " << stream->getId() << ". Reconnecting...";
+        self->reconnectionHandlerAggTradeStream(stream, type, symbol, reconnectInSeconds, aggTradeCB, true, cb);
+      })
+    };
+  }
+
 
   void BMDManager::scheduleTaskAfter(
       uint32_t seconds,
@@ -268,6 +292,7 @@ namespace bmd
     {
       it->second.timer->cancel();
       it->second.stream->stop();
+      it->second.heartBeatChecker->stop();
       _streams.erase(it);
       logI << "Stream " << streamID << " closed successfully.";
     } else
@@ -281,5 +306,9 @@ namespace bmd
     _heartBeatCallback = hearBeat;
   }
 
+  void BMDManager::setUseTestsUrl()
+  {
+    _shouldUseTestUrl = true;
+  }
 
 }
