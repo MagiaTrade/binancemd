@@ -85,9 +85,9 @@ namespace bmd
             {
               if (!success)
               {
-                logW << "Stream (" << stream->getId() << ") @aggTrade closed with msg: " << data;
+                logW << "Stream (" << stream->getId() << ") @aggTrade closed with msg: " << data << ". Reconnecting in 1 seconds ...";
                 aggTradeCB(false, models::AggTrade());
-                self->triggerStreamReconnection(5,stream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
+                self->triggerStreamReconnection(1,stream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
                 return;
               }
 
@@ -116,8 +116,8 @@ namespace bmd
         {
           // Posta a operação no strand para garantir a sincronização
           boost::asio::post(self->strand_, [self, closedStream, symbolCode, aggTradeCB, reconnectInSeconds, type, cb]() {
-            logW << "[BMDManager] Close callback triggered for stream (" << closedStream->getId() << "). Reconnecting in 5 seconds ...";
-            self->triggerStreamReconnection(5, closedStream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
+            logW << "[BMDManager] Close callback triggered for stream (" << closedStream->getId() << "). Reconnecting in 10 seconds ...";
+            self->triggerStreamReconnection(10, closedStream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
           });
         });
 
@@ -200,7 +200,7 @@ namespace bmd
     auto future = promise->get_future();
 
     if(_shouldUseTestUrl)
-      reconnectInSeconds = 30;
+      reconnectInSeconds = 60;
 
     boost::asio::post(strand_, [this, self, type, symbol, reconnectInSeconds, aggTradeCB, cb, promise]() {
       auto cpSymbol = mgutils::string::toLower(symbol);
@@ -286,8 +286,8 @@ namespace bmd
         stream,
         std::make_unique<mgutils::HeartBeatChecker>(_heartBeatTimeOutInMillis, [self = shared_from_this(), stream, symbol, aggTradeCB, reconnectInSeconds, type, cb]()
         {
-          logW << "Heartbeat timeout for stream " << stream->getId() << ". Reconnecting in 5 seconds ...";
-          self->triggerStreamReconnection(5, stream, symbol, type, reconnectInSeconds, aggTradeCB, cb);
+          logW << "Heartbeat timeout for stream " << stream->getId() << ". Reconnecting in 1 seconds ...";
+          self->triggerStreamReconnection(1, stream, symbol, type, reconnectInSeconds, aggTradeCB, cb);
         }),
         // Inicialize o reconnectTimer
         std::make_unique<boost::asio::steady_timer>(_ioc)
