@@ -94,7 +94,7 @@ namespace bmd
     std::thread _worker;
     std::atomic<bool> _stopWorker{false};
 
-    uint64_t _heartBeatTimeOutInMillis = 10000; //60*1000*4; //four minutes
+    uint64_t _heartBeatTimeOutInMillis = 60*1000*4; //four minutes
 
     HeartBeatCallback _heartBeatCallback;
 
