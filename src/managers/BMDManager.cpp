@@ -37,7 +37,7 @@ namespace bmd
       }
       catch (const boost::system::system_error &e)
       {
-        logE << "Error running BMDManager ioContext for timers: " << e.what();
+        logE << "[BMDManager] Error running ioContext for timers: " << e.what();
       }
     });
   }
@@ -49,14 +49,14 @@ namespace bmd
 
   BMDManager::~BMDManager()
   {
-    logW << "BMDManager destructor";
+    logW << "[BMDManager] Destructor";
     _workGuard.reset(); // Allow io_context to stop when no work remains
     _stopWorker = true;
     _ioc.stop();
     if(_worker.joinable())
     {
       if (std::this_thread::get_id() == _worker.get_id())
-        logE << "Destructor called from worker thread; cannot join from within the same thread.";
+        logE << "[BMDManager] Destructor called from worker thread; cannot join from within the same thread.";
       else
         _worker.join();
     }
@@ -81,13 +81,13 @@ namespace bmd
             _shouldUseTestUrl ?  _testsPort : "443" ,
             "/ws/" + cpSymbol + "@aggTrade",
             !_shouldUseTestUrl,
-            [self = shared_from_this(), aggTradeCB, cb, symbolCode, type, reconnectInSeconds](bool success, const std::string& data, SharedStream stream)
+            [self = shared_from_this(), aggTradeCB, cb, symbolCode, type, reconnectInSeconds](bool success, const std::string& data, std::shared_ptr<bb::network::ws::Stream> stream)
             {
               if (!success)
               {
-                logW << "Stream (" << stream->getId() << ") @aggTrade closed with msg: " << data << ". Reconnecting in 1 seconds ...";
+                logW << "[BMDManager] Stream (" << stream->getId() << " Use count: " << stream.use_count() << ") @aggTrade closed with msg: " << data << ". Reconnecting in 10 seconds ...";
                 aggTradeCB(false, models::AggTrade());
-                self->triggerStreamReconnection(1,stream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
+                self->triggerStreamReconnection(10,stream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
                 return;
               }
 
@@ -100,19 +100,19 @@ namespace bmd
               }
               catch (const mgutils::JsonParseException& error)
               {
-                logE << "FuturesUSD Stream @aggTrade parse error: " << error.what();
+                logE << "[BMDManager] FuturesUSD Stream @aggTrade parse error: " << error.what();
                 return;
               }
               catch (const std::exception& ex)
               {
-                logE << "Unexpected error while parsing aggTrade data: " << ex.what();
+                logE << "[BMDManager] Unexpected error while parsing aggTrade data: " << ex.what();
               }
             }
         );
 
     auto sharedStream = stream.lock();
     sharedStream->setCloseStreamCallback(
-        [self = shared_from_this(), symbolCode, aggTradeCB, reconnectInSeconds, type, cb] (SharedStream closedStream)
+        [self = shared_from_this(), symbolCode, aggTradeCB, reconnectInSeconds, type, cb] (const std::shared_ptr<bb::network::ws::Stream>& closedStream)
         {
           // Posta a operação no strand para garantir a sincronização
           boost::asio::post(self->strand_, [self, closedStream, symbolCode, aggTradeCB, reconnectInSeconds, type, cb]() {
@@ -124,13 +124,13 @@ namespace bmd
     sharedStream->setPingStreamCallback([this](const std::shared_ptr<bb::network::ws::Stream>& stream)
                                         {
                                           if(_heartBeatCallback)
-                                            _heartBeatCallback();
+                                            _heartBeatCallback(stream);
 
                                           // Restart the heartbeat for stream
                                           auto self = shared_from_this();
-                                          boost::asio::post(strand_, [this, self, stream]() {
-                                            auto it = _streams.find(stream->getId());
-                                            if (it != _streams.end())
+                                          boost::asio::post(strand_, [self, stream]() {
+                                            auto it = self->_streams.find(stream->getId());
+                                            if (it != self->_streams.end())
                                             {
                                               it->second.heartBeatChecker->restart();
                                             }
@@ -142,6 +142,7 @@ namespace bmd
                                           });
                                         });
 
+    logI << "[BMDManager] Stream " << sharedStream->getId() << " created! Use count: " << sharedStream.use_count();
     return std::move(sharedStream);
   }
 
@@ -157,7 +158,7 @@ namespace bmd
     boost::asio::post(strand_, [self, stream, type, symbolCode, reconnectInSeconds, aggTradeCB, cb]() mutable {
       if (stream->wasClosedByClient())
       {
-        logI << "Stream " << stream->getId() << " has been closed by client, skipping reconnection.";
+        logI << "[BMDManager] Stream " << stream->getId() << " has been closed by client, skipping reconnection.";
         return;
       }
 
@@ -166,21 +167,19 @@ namespace bmd
       auto oldStreamId = stream->getId();
       stream->stop();
       stream = self->createAggTradeStream(type, symbolCode, reconnectInSeconds, aggTradeCB, cb);
-      logI << "Stream " << stream->getId() << " created!";
       auto newStreamId = stream->getId();
 
       // Update the StreamInfo Map
       auto it = self->_streams.find(oldStreamId);
       if (it != self->_streams.end())
       {
-        // Remove the old entry
         self->_streams.erase(it);
       }
 
       auto streamInfo = self->createStreamInfo(stream, symbolCode, type, reconnectInSeconds, aggTradeCB, cb);
 
       self->_streams.emplace(newStreamId, std::move(streamInfo));
-      logI << "Stream " << newStreamId << " emplaced!";
+      logI << "[BMDManager] Stream " << newStreamId << " emplaced!";
 
       // Call the callback to inform the client that streams have changed
       if(cb)
@@ -202,7 +201,8 @@ namespace bmd
     if(_shouldUseTestUrl)
       reconnectInSeconds = 60;
 
-    boost::asio::post(strand_, [this, self, type, symbol, reconnectInSeconds, aggTradeCB, cb, promise]() {
+    boost::asio::post(strand_, [this, self, type, symbol, reconnectInSeconds, aggTradeCB, cb, promise]()
+    {
       auto cpSymbol = mgutils::string::toLower(symbol);
 
       auto stream = createAggTradeStream(type, symbol, reconnectInSeconds, aggTradeCB, cb);
@@ -236,18 +236,18 @@ namespace bmd
         it->second.reconnectTimer->expires_after(std::chrono::seconds(delayInSec));
         it->second.reconnectTimer->async_wait(
           boost::asio::bind_executor(
-              strand_,
-              [self, stream, symbol, type, reconnectInSeconds, aggTradeCB, cb](const boost::system::error_code& ec)
+            strand_,
+            [self, stream, symbol, type, reconnectInSeconds, aggTradeCB, cb](const boost::system::error_code& ec)
+            {
+              if (!ec)
               {
-                if (!ec)
-                {
-                  self->reconnectionHandlerAggTradeStream(stream, type, symbol, reconnectInSeconds, aggTradeCB, cb);
-                }
-                else if (ec != boost::asio::error::operation_aborted)
-                {
-                  logE << "Error in reconnect timer: " << ec.message();
-                }
+                self->reconnectionHandlerAggTradeStream(stream, type, symbol, reconnectInSeconds, aggTradeCB, cb);
               }
+              else if (ec != boost::asio::error::operation_aborted)
+              {
+                logE << "[BMDManager] Error in reconnect timer: " << ec.message();
+              }
+            }
           )
         );
       }
@@ -265,7 +265,7 @@ namespace bmd
             }
             else
             {
-              logE << "Error in timer for reconnection: " << ec.message();
+              logE << "[BMDManager] Error in timer for reconnection: " << ec.message();
             }
           });
         });
@@ -286,7 +286,7 @@ namespace bmd
         stream,
         std::make_unique<mgutils::HeartBeatChecker>(_heartBeatTimeOutInMillis, [self = shared_from_this(), stream, symbol, aggTradeCB, reconnectInSeconds, type, cb]()
         {
-          logW << "Heartbeat timeout for stream " << stream->getId() << ". Reconnecting in 1 seconds ...";
+          logW << "[BMDManager] Heartbeat timeout for stream " << stream->getId() << " Use count: " << stream.use_count() << ". Reconnecting in 1 seconds ...";
           self->triggerStreamReconnection(1, stream, symbol, type, reconnectInSeconds, aggTradeCB, cb);
         }),
         // Inicialize o reconnectTimer
@@ -294,7 +294,7 @@ namespace bmd
       };
 
     // Agende a reconexão usando o reconnectTimer
-    logW << "Schedule reconnect timer for stream " << stream->getId() << ". Reconnecting in " << reconnectInSeconds << " seconds";
+    logW << "[BMDManager] Schedule reconnect timer for stream " << stream->getId() << " Use count: " << stream.use_count() << ". Reconnecting in " << reconnectInSeconds << " seconds";
     streamInfo.reconnectTimer->expires_after(std::chrono::seconds(reconnectInSeconds));
     streamInfo.reconnectTimer->async_wait(
       boost::asio::bind_executor(
@@ -303,7 +303,7 @@ namespace bmd
         {
           if (!ec)
           {
-            logW << "Reconnect timer expired for stream " << stream->getId() << ". Reconnecting...";
+            logW << "[BMDManager] Reconnect timer expired for stream " << stream->getId() << " Uses count: " << stream.use_count() << ". Reconnecting...";
             self->reconnectionHandlerAggTradeStream(
                 stream,
                 type,
@@ -314,7 +314,7 @@ namespace bmd
           }
           else if (ec != boost::asio::error::operation_aborted)
           {
-            logE << "Error in reconnect timer: " << ec.message();
+            logE << "[BMDManager] Error in reconnect timer: " << ec.message();
           }
         }
       )
@@ -342,7 +342,8 @@ namespace bmd
   void BMDManager::closeStream(uint32_t streamID)
   {
     auto self = shared_from_this();
-    boost::asio::post(strand_, [this, self, streamID]() {
+    boost::asio::post(strand_, [this, self, streamID]()
+    {
       auto it = _streams.find(streamID);
 
       if (it != _streams.end())
@@ -373,10 +374,7 @@ namespace bmd
 
   void BMDManager::setUseTestsUrl()
   {
-    auto self = shared_from_this();
-    boost::asio::post(strand_, [this, self]() {
-      _shouldUseTestUrl = true;
-    });
+    _shouldUseTestUrl = true;
   }
 
 }

@@ -30,7 +30,7 @@ namespace bmd
   using AggTradeStreamCallback = std::function<void(bool, const models::AggTrade& aggTrade)>;
   using ReconnetUserDataStreamCallback = std::function<void(uint32_t newStreamId, uint32_t oldStreamId)>;
   using ScheduleCallback = std::function<void(bool success)>;
-  using HeartBeatCallback = std::function<void(void)>;
+  using HeartBeatCallback = std::function<void(const std::shared_ptr<bb::network::ws::Stream>& stream)>;
 
   class BMDManager : public std::enable_shared_from_this<BMDManager>
   {
@@ -94,12 +94,9 @@ namespace bmd
     std::thread _worker;
     std::atomic<bool> _stopWorker{false};
 
-    uint64_t _heartBeatTimeOutInMillis = 60*1000*4; //four minutes
+    uint64_t _heartBeatTimeOutInMillis = 60*1000*3 + 10*1000; //3 minutes + 10 seconds (3 minutes is the limit)
 
     HeartBeatCallback _heartBeatCallback;
-
-    // Removido o mutex
-    // std::mutex _streamsMutex;
 
     // Adicionado strand para sincronização
     boost::asio::strand<boost::asio::io_context::executor_type> strand_;
